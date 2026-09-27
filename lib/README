@@ -1,0 +1,15 @@
+This directory is intended for private project libraries.
+
+Place the Waveshare ESP32-AMOLED QSPI display driver here
+once downloaded from: https://github.com/waveshareteam/ESP32-AMOLED-LCD
+
+Each library must be in its own subdirectory, e.g.:
+  lib/
+  └── WaveshareAMOLED/
+      ├── library.properties
+      ├── src/
+      │   ├── WaveshareAMOLED.h
+      │   └── WaveshareAMOLED.cpp
+      └── examples/
+
+See: https://docs.platformio.org/page/projectconf/section_env_lib.html

@@ -1,0 +1,5 @@
+.pio
+.vscode/
+*.log
+build_log.txt
+scratch/

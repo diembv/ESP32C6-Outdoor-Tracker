@@ -1,0 +1,7 @@
+{
+  "name": "WaveshareBSP",
+  "version": "1.0.0",
+  "description": "Waveshare ESP32-C6-Touch-AMOLED-1.64 BSP",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}

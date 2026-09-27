@@ -1,0 +1,8 @@
+This directory is intended for project-specific (private) headers.
+
+Planned headers:
+  config.h        — Centralized pin definitions & constants
+  gps_manager.h   — GPS data structures & parsing helpers
+  bmp_sensor.h    — Barometric sensor abstraction
+  display.h       — QSPI AMOLED driver interface
+  ui_dashboard.h  — LVGL widget declarations
