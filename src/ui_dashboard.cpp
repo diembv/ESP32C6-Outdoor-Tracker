@@ -158,21 +158,21 @@ static void build_tile1_sensors(lv_obj_t *tile)
 
     make_hline(tile, 112);
 
-    make_key_label(tile, "GPS Position", 8, 120);
+    make_key_label(tile, "GPS Position & Alt", 8, 120);
     t1_lbl_coords = lv_label_create(tile);
-    lv_label_set_text(t1_lbl_coords, "--.------ N\n--.------ E");
+    lv_label_set_text(t1_lbl_coords, "--.------ N\n--.------ E\nAlt: -- m (GPS)");
     lv_obj_set_style_text_font(t1_lbl_coords, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(t1_lbl_coords, CLR_YELLOW, 0);
     lv_obj_set_pos(t1_lbl_coords, 8, 140);
 
-    make_hline(tile, 205);
+    make_hline(tile, 225);
 
-    make_key_label(tile, "Environment & IMU", 8, 215);
+    make_key_label(tile, "Environment & IMU", 8, 235);
     t1_lbl_env = lv_label_create(tile);
-    lv_label_set_text(t1_lbl_env, "-- C\n-- hPa  |  -- m\nP: --  |  R: --");
+    lv_label_set_text(t1_lbl_env, "-- C\n-- hPa  |  Baro: -- m\nP: --  |  R: --");
     lv_obj_set_style_text_font(t1_lbl_env, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(t1_lbl_env, CLR_ENVGREEN, 0);
-    lv_obj_set_pos(t1_lbl_env, 8, 235);
+    lv_obj_set_pos(t1_lbl_env, 8, 255);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -297,16 +297,20 @@ void ui_dashboard_update(const SensorSnapshot *snap)
         int32_t lonInt = (int32_t)absLon;
         int32_t lonDec = (int32_t)((absLon - lonInt) * 1000000);
 
-        snprintf(buf, sizeof(buf), "%ld.%06ld %c\n%ld.%06ld %c", 
+        int32_t gpsAltInt = (int32_t)snap->gps.altitude_m;
+        int32_t gpsAltDec = (int32_t)((snap->gps.altitude_m >= 0 ? snap->gps.altitude_m - gpsAltInt : -(snap->gps.altitude_m) - (-gpsAltInt)) * 10);
+
+        snprintf(buf, sizeof(buf), "%ld.%06ld %c\n%ld.%06ld %c\nAlt: %ld.%01ld m (GPS)", 
                  (long)latInt, (long)latDec, cLat,
-                 (long)lonInt, (long)lonDec, cLon);
+                 (long)lonInt, (long)lonDec, cLon,
+                 (long)gpsAltInt, (long)abs(gpsAltDec));
     } else {
-        snprintf(buf, sizeof(buf), "--.------ N\n--.------ E");
+        snprintf(buf, sizeof(buf), "--.------ N\n--.------ E\nAlt: -- m (GPS)");
     }
     lv_label_set_text(t1_lbl_coords, buf);
 
-    // Gộp Alt, P, T, Pitch, Roll
-    char baroPart[64] = "-- C\n-- hPa  |  -- m";
+    // Gộp Alt Baro, P, T, Pitch, Roll
+    char baroPart[64] = "-- C\n-- hPa  |  Baro: -- m";
     if (snap->baro.valid) {
         int32_t tInt = (int32_t)snap->baro.temperature_c;
         int32_t tDec = (int32_t)((snap->baro.temperature_c >= 0 ? snap->baro.temperature_c - tInt : -snap->baro.temperature_c + tInt) * 10);
@@ -315,7 +319,7 @@ void ui_dashboard_update(const SensorSnapshot *snap)
         int32_t altInt = (int32_t)snap->baro.altitude_m;
         int32_t altDec = (int32_t)((snap->baro.altitude_m >= 0 ? snap->baro.altitude_m - altInt : -(snap->baro.altitude_m) - (-altInt)) * 10);
 
-        snprintf(baroPart, sizeof(baroPart), "%ld.%01ld C\n%ld.%01ld hPa  |  %ld.%01ld m", 
+        snprintf(baroPart, sizeof(baroPart), "%ld.%01ld C\n%ld.%01ld hPa  |  Baro: %ld.%01ld m", 
                  (long)tInt, (long)abs(tDec),
                  (long)pInt, (long)abs(pDec), 
                  (long)altInt, (long)abs(altDec));

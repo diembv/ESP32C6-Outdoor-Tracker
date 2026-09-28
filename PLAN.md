@@ -215,8 +215,9 @@ Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 
 - **Trang 0 (Bên trái):** Navigation (GPS Course, Heading, La bàn số).
 - **Trang 1 (Ở giữa - Mặc định):** 
   - GPS Position (kinh độ/vĩ độ định dạng `N / E`).
+  - Cao độ GPS: `Alt: ... m (GPS)` lấy từ vệ tinh.
   - Tốc độ (`km/h`), Số vệ tinh GPS.
-  - Box Environment & IMU: Dòng 1: Nhiệt độ (`°C`), Dòng 2: Áp suất (`hPa`) & Cao độ (`m`), Dòng 3: Pitch & Roll (`P: ... | R: ...`).
+  - Box Environment & IMU: Dòng 1: Nhiệt độ (`°C`), Dòng 2: Áp suất (`hPa`) & Cao độ phong vũ biểu (`Baro: ... m`), Dòng 3: Pitch & Roll (`P: ... | R: ...`).
 - **Trang 2 (Bên phải):** System (GPS Stats, Uptime, Điện áp pin `V` và `%`, trạng thái thẻ nhớ SD).
 
 ### Thao tác cử chỉ (Gestures):
