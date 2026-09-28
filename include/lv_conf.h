@@ -364,7 +364,7 @@
  *https://fonts.google.com/specimen/Montserrat*/
 #define LV_FONT_MONTSERRAT_8  0
 #define LV_FONT_MONTSERRAT_10 0
-#define LV_FONT_MONTSERRAT_12 0
+#define LV_FONT_MONTSERRAT_12 1
 #define LV_FONT_MONTSERRAT_14 1
 #define LV_FONT_MONTSERRAT_16 0
 #define LV_FONT_MONTSERRAT_18 0
@@ -549,7 +549,7 @@
 
 #define LV_USE_TABVIEW    0   /* không dùng */
 
-#define LV_USE_TILEVIEW   0   /* không dùng */
+#define LV_USE_TILEVIEW   1   /* Dashboard 3-page swipe */
 
 #define LV_USE_WIN        0   /* không dùng */
 

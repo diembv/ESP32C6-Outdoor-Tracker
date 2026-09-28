@@ -1,0 +1,390 @@
+/**
+ * @file ui_dashboard.cpp
+ * @brief LVGL 3-page Dashboard — Milestone 4 Implementation
+ */
+
+#include "ui_dashboard.h"
+#include <string.h>
+#include <stdio.h>
+#include <math.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  LVGL Object Handles
+// ═══════════════════════════════════════════════════════════════════════════════
+
+static lv_obj_t *s_tileview = nullptr;
+static lv_obj_t *s_tile[3]  = {nullptr, nullptr, nullptr};
+
+// ── Tile 1: Outdoor Sensors (Mặc định - Chính giữa) ───────────────────────────
+static lv_obj_t *t1_lbl_header;    
+static lv_obj_t *t1_lbl_speed;     
+static lv_obj_t *t1_lbl_coords;    
+static lv_obj_t *t1_lbl_env;       
+static lv_obj_t *t1_dot_fix;       
+
+// ── Tile 2: Navigation (Bên phải) ────────────────────────────────────────────
+static lv_obj_t *t2_lbl_direction; 
+static lv_obj_t *t2_lbl_note;     
+
+// ── Tile 0: System (Bên trái) ────────────────────────────────────────────────
+static lv_obj_t *t0_lbl_gps_stats; 
+static lv_obj_t *t0_lbl_uptime;    
+static lv_obj_t *t0_lbl_battery;   
+static lv_obj_t *t0_lbl_sd;        
+static lv_obj_t *t0_dot_gps;       
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+static lv_obj_t *make_hline(lv_obj_t *parent, lv_coord_t y)
+{
+    lv_obj_t *line = lv_obj_create(parent);
+    lv_obj_set_size(line, SCREEN_W - 16, 1);
+    lv_obj_set_pos(line, 8, y);
+    lv_obj_set_style_bg_color(line, CLR_BORDER, 0);
+    lv_obj_set_style_bg_opa(line, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(line, 0, 0);
+    lv_obj_set_style_radius(line, 0, 0);
+    lv_obj_clear_flag(line, LV_OBJ_FLAG_SCROLLABLE);
+    return line;
+}
+
+static lv_obj_t *make_key_label(lv_obj_t *parent, const char *text, lv_coord_t x, lv_coord_t y)
+{
+    lv_obj_t *lbl = lv_label_create(parent);
+    lv_label_set_text(lbl, text);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl, CLR_DIMTEXT, 0);
+    lv_obj_set_pos(lbl, x, y);
+    return lbl;
+}
+
+static lv_obj_t *make_val_label(lv_obj_t *parent, const char *init_text, lv_color_t color, const lv_font_t *font, lv_coord_t x, lv_coord_t y)
+{
+    lv_obj_t *lbl = lv_label_create(parent);
+    lv_label_set_text(lbl, init_text);
+    lv_obj_set_style_text_font(lbl, font, 0);
+    lv_obj_set_style_text_color(lbl, color, 0);
+    lv_obj_set_pos(lbl, x, y);
+    return lbl;
+}
+
+static lv_obj_t *make_dot(lv_obj_t *parent, lv_color_t color, lv_coord_t x, lv_coord_t y, lv_coord_t size = 10)
+{
+    lv_obj_t *dot = lv_obj_create(parent);
+    lv_obj_set_size(dot, size, size);
+    lv_obj_set_pos(dot, x, y);
+    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(dot, color, 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(dot, 0, 0);
+    return dot;
+}
+
+static void style_tile(lv_obj_t *tile)
+{
+    lv_obj_set_style_bg_color(tile, CLR_BG, 0);
+    lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(tile, 0, 0);
+    lv_obj_set_style_border_width(tile, 0, 0);
+    lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Event Handler cho Swipe Up -> Về màn chính
+// ═══════════════════════════════════════════════════════════════════════════════
+static void swipe_gesture_cb(lv_event_t * e)
+{
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+    if (dir == LV_DIR_TOP) {
+        // Vuốt từ dưới lên -> Về tile 1 (Sensors)
+        lv_obj_set_tile_id(s_tileview, 1, 0, LV_ANIM_ON);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Tile 0: Navigation (Bên trái)
+// ═══════════════════════════════════════════════════════════════════════════════
+static void build_tile0_navigation(lv_obj_t *tile)
+{
+    style_tile(tile);
+
+    lv_obj_t *hdr = make_val_label(tile, "NAVIGATION", CLR_ACCENT, &lv_font_montserrat_20, 8, 12);
+    (void)hdr;
+    make_hline(tile, 46);
+
+    make_key_label(tile, "Course / Heading", SCREEN_W/2 - 60, 60);
+
+    t2_lbl_direction = lv_label_create(tile);
+    lv_label_set_text(t2_lbl_direction, "N (000 deg)");
+    lv_obj_set_style_text_font(t2_lbl_direction, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(t2_lbl_direction, CLR_ORANGE, 0);
+    lv_obj_set_style_text_align(t2_lbl_direction, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(t2_lbl_direction, SCREEN_W);
+    lv_obj_set_pos(t2_lbl_direction, 0, 80);
+
+    make_hline(tile, 130);
+
+    t2_lbl_note = lv_label_create(tile);
+    lv_label_set_text(t2_lbl_note, "GPS Course khi speed > 0.5 km/h");
+    lv_obj_set_style_text_font(t2_lbl_note, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(t2_lbl_note, CLR_DIMTEXT, 0);
+    lv_obj_set_pos(t2_lbl_note, 8, 140);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Tile 1: Sensors (Mặc định - Ở giữa)
+// ═══════════════════════════════════════════════════════════════════════════════
+static void build_tile1_sensors(lv_obj_t *tile)
+{
+    style_tile(tile);
+
+    t1_dot_fix = make_dot(tile, CLR_RED, 8, 12);
+    t1_lbl_header = make_val_label(tile, "Sats: 0 | Bat: 100%", CLR_ACCENT, &lv_font_montserrat_20, 26, 6);
+    make_hline(tile, 42);
+
+    make_key_label(tile, "Speed", SCREEN_W/2 - 18, 50);
+    t1_lbl_speed = lv_label_create(tile);
+    lv_label_set_text(t1_lbl_speed, "0.0 km/h");
+    lv_obj_set_style_text_font(t1_lbl_speed, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_color(t1_lbl_speed, CLR_WHITE, 0);
+    lv_obj_set_style_text_align(t1_lbl_speed, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(t1_lbl_speed, SCREEN_W);
+    lv_obj_set_pos(t1_lbl_speed, 0, 68);
+
+    make_hline(tile, 112);
+
+    make_key_label(tile, "GPS Position", 8, 120);
+    t1_lbl_coords = lv_label_create(tile);
+    lv_label_set_text(t1_lbl_coords, "--.------ N\n--.------ E");
+    lv_obj_set_style_text_font(t1_lbl_coords, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(t1_lbl_coords, CLR_YELLOW, 0);
+    lv_obj_set_pos(t1_lbl_coords, 8, 140);
+
+    make_hline(tile, 205);
+
+    make_key_label(tile, "Environment & IMU", 8, 215);
+    t1_lbl_env = lv_label_create(tile);
+    lv_label_set_text(t1_lbl_env, "-- C\n-- hPa  |  -- m\nP: --  |  R: --");
+    lv_obj_set_style_text_font(t1_lbl_env, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(t1_lbl_env, CLR_ENVGREEN, 0);
+    lv_obj_set_pos(t1_lbl_env, 8, 235);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Tile 2: System (Bên phải)
+// ═══════════════════════════════════════════════════════════════════════════════
+static void build_tile2_system(lv_obj_t *tile)
+{
+    style_tile(tile);
+
+    make_val_label(tile, "SYSTEM", CLR_ACCENT, &lv_font_montserrat_20, 8, 12);
+    make_hline(tile, 46);
+
+    t0_dot_gps = make_dot(tile, CLR_RED, 8, 62);
+    make_key_label(tile, "GPS Status", 26, 56);
+    t0_lbl_gps_stats = lv_label_create(tile);
+    lv_label_set_text(t0_lbl_gps_stats, "chars=0  fixes=0  err=0");
+    lv_obj_set_style_text_font(t0_lbl_gps_stats, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(t0_lbl_gps_stats, CLR_WHITE, 0);
+    lv_obj_set_pos(t0_lbl_gps_stats, 8, 78);
+
+    make_hline(tile, 116);
+
+    make_key_label(tile, "Uptime", 8, 124);
+    t0_lbl_uptime = lv_label_create(tile);
+    lv_label_set_text(t0_lbl_uptime, "00:00:00");
+    lv_obj_set_style_text_font(t0_lbl_uptime, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(t0_lbl_uptime, CLR_WHITE, 0);
+    lv_obj_set_pos(t0_lbl_uptime, 8, 142);
+
+    make_hline(tile, 180);
+
+    make_key_label(tile, "Battery", 8, 188);
+    t0_lbl_battery = lv_label_create(tile);
+    lv_label_set_text(t0_lbl_battery, "-- V | -- %");
+    lv_obj_set_style_text_font(t0_lbl_battery, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(t0_lbl_battery, CLR_YELLOW, 0);
+    lv_obj_set_pos(t0_lbl_battery, 8, 206);
+
+    make_hline(tile, 244);
+
+    make_key_label(tile, "SD Card", 8, 252);
+    t0_lbl_sd = lv_label_create(tile);
+    lv_label_set_text(t0_lbl_sd, "No card (*placeholder)");
+    lv_obj_set_style_text_font(t0_lbl_sd, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(t0_lbl_sd, CLR_ACCENT, 0);
+    lv_obj_set_pos(t0_lbl_sd, 8, 270);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  GPS Course → compass direction string
+// ═══════════════════════════════════════════════════════════════════════════════
+static const char *course_to_dir(float course)
+{
+    if (course < 22.5f  || course >= 337.5f) return "N";
+    if (course < 67.5f)  return "NE";
+    if (course < 112.5f) return "E";
+    if (course < 157.5f) return "SE";
+    if (course < 202.5f) return "S";
+    if (course < 247.5f) return "SW";
+    if (course < 292.5f) return "W";
+    return "NW";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Public API
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void ui_dashboard_init(void)
+{
+    lv_obj_t *scr = lv_scr_act();
+    lv_obj_set_style_bg_color(scr, CLR_BG, 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+
+    // Gán gesture cho toàn màn hình
+    lv_obj_add_event_cb(scr, swipe_gesture_cb, LV_EVENT_GESTURE, NULL);
+
+    s_tileview = lv_tileview_create(scr);
+    lv_obj_set_size(s_tileview, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(s_tileview, 0, 0);
+    lv_obj_set_style_bg_color(s_tileview, CLR_BG, 0);
+    lv_obj_set_style_bg_opa(s_tileview, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(s_tileview, 0, 0);
+    
+    // TẮT SCROLLBARS (không còn 3 chấm)
+    lv_obj_set_scrollbar_mode(s_tileview, LV_SCROLLBAR_MODE_OFF);
+
+    // ── 3 Tiles ngang: Navigation (0) - Sensors (1) - System (2)
+    s_tile[0] = lv_tileview_add_tile(s_tileview, 0, 0, LV_DIR_RIGHT);
+    s_tile[1] = lv_tileview_add_tile(s_tileview, 1, 0, LV_DIR_HOR);
+    s_tile[2] = lv_tileview_add_tile(s_tileview, 2, 0, LV_DIR_LEFT);
+
+    build_tile0_navigation(s_tile[0]);
+    build_tile1_sensors(s_tile[1]);
+    build_tile2_system(s_tile[2]);
+
+    // Đặt mặc định mở trang ở giữa (Sensors - Tile 1)
+    lv_obj_set_tile(s_tileview, s_tile[1], LV_ANIM_OFF);
+}
+
+void ui_dashboard_update(const SensorSnapshot *snap)
+{
+    if (!snap) return;
+    char buf[128];
+
+    // ═══ Tile 1: Sensors (Chính) ═════════════════════════════════════════════
+    lv_obj_set_style_bg_color(t1_dot_fix, snap->gps.fix_valid ? CLR_GREEN : CLR_RED, 0);
+
+    snprintf(buf, sizeof(buf), "Sats: %lu | Bat: --%% ", (unsigned long)snap->gps.satellites);
+    lv_label_set_text(t1_lbl_header, buf);
+
+    snprintf(buf, sizeof(buf), "%.1f km/h", snap->gps.speed_kmh);
+    lv_label_set_text(t1_lbl_speed, buf);
+
+    if (snap->gps.fix_valid) {
+        double absLat = snap->gps.latitude >= 0 ? snap->gps.latitude : -snap->gps.latitude;
+        double absLon = snap->gps.longitude >= 0 ? snap->gps.longitude : -snap->gps.longitude;
+        char cLat = snap->gps.latitude >= 0 ? 'N' : 'S';
+        char cLon = snap->gps.longitude >= 0 ? 'E' : 'W';
+
+        int32_t latInt = (int32_t)absLat;
+        int32_t latDec = (int32_t)((absLat - latInt) * 1000000);
+        int32_t lonInt = (int32_t)absLon;
+        int32_t lonDec = (int32_t)((absLon - lonInt) * 1000000);
+
+        snprintf(buf, sizeof(buf), "%ld.%06ld %c\n%ld.%06ld %c", 
+                 (long)latInt, (long)latDec, cLat,
+                 (long)lonInt, (long)lonDec, cLon);
+    } else {
+        snprintf(buf, sizeof(buf), "--.------ N\n--.------ E");
+    }
+    lv_label_set_text(t1_lbl_coords, buf);
+
+    // Gộp Alt, P, T, Pitch, Roll
+    char baroPart[64] = "-- C\n-- hPa  |  -- m";
+    if (snap->baro.valid) {
+        int32_t tInt = (int32_t)snap->baro.temperature_c;
+        int32_t tDec = (int32_t)((snap->baro.temperature_c >= 0 ? snap->baro.temperature_c - tInt : -snap->baro.temperature_c + tInt) * 10);
+        int32_t pInt = (int32_t)snap->baro.pressure_hpa;
+        int32_t pDec = (int32_t)((snap->baro.pressure_hpa - pInt) * 10);
+        int32_t altInt = (int32_t)snap->baro.altitude_m;
+        int32_t altDec = (int32_t)((snap->baro.altitude_m >= 0 ? snap->baro.altitude_m - altInt : -(snap->baro.altitude_m) - (-altInt)) * 10);
+
+        snprintf(baroPart, sizeof(baroPart), "%ld.%01ld C\n%ld.%01ld hPa  |  %ld.%01ld m", 
+                 (long)tInt, (long)abs(tDec),
+                 (long)pInt, (long)abs(pDec), 
+                 (long)altInt, (long)abs(altDec));
+    }
+
+    char imuPart[64] = "P: --  |  R: --";
+    if (snap->imu.valid) {
+        float p = snap->imu.pitch_deg;
+        float r = snap->imu.roll_deg;
+        int32_t pi = (int32_t)p;
+        int32_t pd = (int32_t)((p >= 0 ? p - pi : -p + pi) * 10);
+        int32_t ri = (int32_t)r;
+        int32_t rd = (int32_t)((r >= 0 ? r - ri : -r + ri) * 10);
+
+        char psign = (p < 0) ? '-' : ' ';
+        char rsign = (r < 0) ? '-' : ' ';
+        snprintf(imuPart, sizeof(imuPart), "P: %c%ld.%01ld  |  R: %c%ld.%01ld", 
+                 psign, (long)abs(pi), (long)abs(pd),
+                 rsign, (long)abs(ri), (long)abs(rd));
+    }
+
+    snprintf(buf, sizeof(buf), "%s\n%s", baroPart, imuPart);
+    lv_label_set_text(t1_lbl_env, buf);
+
+    // ═══ Tile 0: Navigation (Trái) ════════════════════════════════════════════
+    {
+        const char *dir = course_to_dir(snap->gps.course_deg);
+        int32_t courseInt = (int32_t)snap->gps.course_deg;
+        snprintf(buf, sizeof(buf), "%s (%03ld deg)", dir, (long)courseInt);
+        lv_label_set_text(t2_lbl_direction, buf);
+    }
+    if (snap->gps.fix_valid && snap->gps.speed_kmh > 0.5f) {
+        lv_obj_set_style_text_color(t2_lbl_note, CLR_GREEN, 0);
+    } else {
+        lv_obj_set_style_text_color(t2_lbl_note, CLR_DIMTEXT, 0);
+    }
+
+    // ═══ Tile 2: System (Phải) ════════════════════════════════════════════════
+    lv_obj_set_style_bg_color(t0_dot_gps, snap->gps.fix_valid ? CLR_GREEN : CLR_RED, 0);
+
+    {
+        uint32_t chars_k = snap->gps.chars_proc / 1000;
+        uint32_t chars_r = snap->gps.chars_proc % 1000 / 100;
+        snprintf(buf, sizeof(buf), "chars=%lu.%luk  fixes=%lu  err=%lu",
+                 (unsigned long)chars_k, (unsigned long)chars_r,
+                 (unsigned long)snap->gps.fixes, (unsigned long)snap->gps.checksum_err);
+        lv_label_set_text(t0_lbl_gps_stats, buf);
+    }
+
+    {
+        uint32_t h = snap->sys.uptime_s / 3600;
+        uint32_t m = (snap->sys.uptime_s % 3600) / 60;
+        uint32_t s = snap->sys.uptime_s % 60;
+        snprintf(buf, sizeof(buf), "%02lu:%02lu:%02lu", (unsigned long)h, (unsigned long)m, (unsigned long)s);
+        lv_label_set_text(t0_lbl_uptime, buf);
+    }
+
+    // Battery (Thêm hiển thị Volts)
+    int32_t vInt = (int32_t)snap->sys.battery_v;
+    int32_t vDec = (int32_t)((snap->sys.battery_v - vInt) * 100);
+    snprintf(buf, sizeof(buf), "%ld.%02ld V  |  %d %%", (long)vInt, (long)abs(vDec), (int)snap->sys.battery_pct);
+    lv_label_set_text(t0_lbl_battery, buf);
+
+    if (snap->sys.sd_present && snap->sys.sd_ok) {
+        snprintf(buf, sizeof(buf), "Logging (%lu MB)", (unsigned long)snap->sys.sd_free_mb);
+        lv_label_set_text(t0_lbl_sd, buf);
+        lv_obj_set_style_text_color(t0_lbl_sd, CLR_GREEN, 0);
+    } else {
+        lv_label_set_text(t0_lbl_sd, "No SD card");
+        lv_obj_set_style_text_color(t0_lbl_sd, CLR_DIMTEXT, 0);
+    }
+}

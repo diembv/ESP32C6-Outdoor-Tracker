@@ -1,37 +1,40 @@
 /**
  * @file    main.cpp
- * @brief   ESP32-C6 Outdoor Tracker — Hardware Bring-Up Test  (v2 – crash fix)
+ * @brief   ESP32-C6 Outdoor Tracker — Milestone 4: LVGL 3-page Dashboard
  *
- * Milestone 5 — GPS, BMP580, AMOLED LVGL Dashboard, QMI8658 IMU
+ * Board  : Waveshare ESP32-C6-Touch-AMOLED-1.64
+ * Screen : SH8601 AMOLED 280 × 456 px (QSPI)
+ * MCU    : ESP32-C6 RISC-V @ 160 MHz, 512 KB SRAM, no PSRAM
+ *
+ * QMI8658 NOTE:
+ *   SensorLib @ 0.5.0 dùng ESP-IDF driver_ng (i2c_master new API) nội bộ.
+ *   Wire.begin() dùng driver cũ (i2c_driver_install). Hai driver không thể
+ *   cùng tồn tại trên một I2C peripheral → abort() crash loop.
+ *   Fix: đọc QMI8658 trực tiếp qua Wire (không dùng SensorLib).
  */
 
 #include <Arduino.h>
 #include <Wire.h>
 #include <TinyGPSPlus.h>
 #include <Adafruit_BMP5xx.h>
-#include <SensorQMI8658.hpp>
+#include <math.h>
 #include <lvgl.h>
 #include "lcd_bsp.h"
+#include "ui_dashboard.h"
+#include "sd_logger.h"
 
-// ── Biến giao diện (LVGL) ─────────────────────────────────────────────────
-lv_obj_t * label_header;
-lv_obj_t * label_compass;
-lv_obj_t * label_speed;
-lv_obj_t * label_coords;
-lv_obj_t * label_imu;
-lv_obj_t * label_env;
-
-// ── Pin config (overridable từ platformio.ini build_flags) ──────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Pin Config
+// ═══════════════════════════════════════════════════════════════════════════════
 #ifndef GPS_RX_PIN
-#  define GPS_RX_PIN   2   // GPIO2 ← GPS TX
+#  define GPS_RX_PIN   2
 #endif
 #ifndef GPS_TX_PIN
-#  define GPS_TX_PIN   3   // GPIO3 → GPS RX
+#  define GPS_TX_PIN   3
 #endif
 #ifndef GPS_BAUD
 #  define GPS_BAUD  9600
 #endif
-
 #ifndef I2C_SDA_PIN
 #  define I2C_SDA_PIN 18
 #endif
@@ -39,67 +42,154 @@ lv_obj_t * label_env;
 #  define I2C_SCL_PIN  8
 #endif
 #ifndef BMP580_I2C_ADDR
-#  define BMP580_I2C_ADDR 0x47   // SDO=VCC → 0x47
+#  define BMP580_I2C_ADDR 0x47
 #endif
 
-// ── Timing ────────────────────────────────────────────────────────────────
-static constexpr uint32_t PRINT_INTERVAL_MS = 2000;
-static constexpr uint32_t GPS_TIMEOUT_MS    = 12000;
+// ═══════════════════════════════════════════════════════════════════════════════
+//  QMI8658 — Direct Wire Driver (không dùng SensorLib)
+//
+//  SensorLib 0.5.0 gây I2C driver_ng conflict với Wire → crash loop.
+//  Giải pháp: đọc thẳng thanh ghi QMI8658 qua Wire.
+//
+//  Datasheet: QMI8658A, I2C addr 0x6A (SA0=GND) / 0x6B (SA0=VCC)
+// ═══════════════════════════════════════════════════════════════════════════════
+#define QMI8658_ADDR        0x6A    // board Waveshare: SA0=GND → 0x6A
+#define QMI_REG_WHO_AM_I    0x00    // returns 0x05
+#define QMI_REG_CTRL1       0x02    // SPI/I2C mode
+#define QMI_REG_CTRL2       0x03    // Accel config: range + ODR
+#define QMI_REG_CTRL7       0x08    // Enable sensors
+#define QMI_REG_AX_L        0x35    // Accel X low byte (6 regs: AX,AY,AZ)
+#define QMI_REG_STATUS0     0x2E    // Data ready status
 
-// ── Objects ───────────────────────────────────────────────────────────────
-HardwareSerial  gpsSerial(1);   // UART1
-TinyGPSPlus     gps;
+static bool     qmiOk    = false;
+static float    imuPitch = 0.0f;
+static float    imuRoll  = 0.0f;
+
+static uint8_t qmiAddress = QMI8658_ADDR;
+
+// ── Đọc n bytes từ thanh ghi QMI8658 ─────────────────────────────────────────
+static bool qmiReadRegs(uint8_t reg, uint8_t *buf, uint8_t len) {
+    Wire.beginTransmission(qmiAddress);
+    Wire.write(reg);
+    if (Wire.endTransmission(true) != 0) return false;
+    uint8_t got = Wire.requestFrom((uint8_t)qmiAddress, len);
+    if (got != len) return false;
+    for (uint8_t i = 0; i < len; i++) buf[i] = Wire.read();
+    return true;
+}
+
+// ── Ghi 1 byte vào thanh ghi QMI8658 ────────────────────────────────────────
+static bool qmiWriteReg(uint8_t reg, uint8_t val) {
+    Wire.beginTransmission(qmiAddress);
+    Wire.write(reg);
+    Wire.write(val);
+    return Wire.endTransmission() == 0;
+}
+
+// ── Khởi tạo QMI8658 ─────────────────────────────────────────────────────────
+static bool initQMI8658() {
+    Serial.print(F("[IMU] QMI8658 WHO_AM_I ... "));
+    uint8_t who = 0;
+    qmiAddress = 0x6A; // Thử địa chỉ mặc định trước
+    if (!qmiReadRegs(QMI_REG_WHO_AM_I, &who, 1) || who != 0x05) {
+        qmiAddress = 0x6B; // Fallback sang 0x6B
+        if (!qmiReadRegs(QMI_REG_WHO_AM_I, &who, 1) || who != 0x05) {
+            Serial.println(F("I2C error (Thử cả 0x6A và 0x6B)."));
+            return false;
+        }
+    }
+    Serial.printf("OK (0x%02X tại 0x%02X)\n", who, qmiAddress);
+
+    if (!qmiWriteReg(QMI_REG_CTRL1, 0x40)) return false;
+    if (!qmiWriteReg(QMI_REG_CTRL2, 0x13)) return false;
+    if (!qmiWriteReg(QMI_REG_CTRL7, 0x01)) return false;
+    delay(10);
+    return true;
+}
+
+// ── Đọc accelerometer → tính Pitch / Roll ────────────────────────────────────
+static void readQMI8658(float &pitch, float &roll) {
+    uint8_t raw[6];
+    if (!qmiReadRegs(QMI_REG_AX_L, raw, 6)) return;
+
+    int16_t ax_raw = (int16_t)((raw[1] << 8) | raw[0]);
+    int16_t ay_raw = (int16_t)((raw[3] << 8) | raw[2]);
+    int16_t az_raw = (int16_t)((raw[5] << 8) | raw[4]);
+
+    // ±4g range → sensitivity = 8192 LSB/g
+    float ax = ax_raw / 8192.0f;
+    float ay = ay_raw / 8192.0f;
+    float az = az_raw / 8192.0f;
+
+    pitch = atan2f(-ax, sqrtf(ay*ay + az*az)) * 180.0f / (float)M_PI;
+    roll  = atan2f( ay, az)                   * 180.0f / (float)M_PI;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Timing
+// ═══════════════════════════════════════════════════════════════════════════════
+static constexpr uint32_t SENSOR_READ_MS  = 200;  // 5Hz
+static constexpr uint32_t UI_UPDATE_MS    = 250;  // 4Hz
+static constexpr uint32_t SERIAL_PRINT_MS = 2000;
+static constexpr uint32_t GPS_TIMEOUT_MS  = 12000;
+static constexpr uint32_t I2C_RETRY_EVERY = 10;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Hardware Objects
+// ═══════════════════════════════════════════════════════════════════════════════
+HardwareSerial  gpsSerial(1);
+TinyGPSPlus     gpsParser;
 Adafruit_BMP5xx bmp;
-SensorQMI8658   qmi;
 
-// ── State ─────────────────────────────────────────────────────────────────
-static uint32_t tLastPrint = 0;
-static uint32_t tLastGps   = 0;
-static bool     bmpOk      = false;
-static bool     imuOk      = false;
-static float    imuPitch   = 0.0f;
-static float    imuRoll    = 0.0f;
+// ═══════════════════════════════════════════════════════════════════════════════
+//  State
+// ═══════════════════════════════════════════════════════════════════════════════
+static bool     bmpOk        = false;
+static uint32_t tLastSensor  = 0;
+static uint32_t tLastUiUpd   = 0;
+static uint32_t tLastPrint   = 0;
+static uint32_t tLastGps     = 0;
+static uint32_t tBoot        = 0;
+static uint8_t  printCount   = 0;
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  I2C Bus Scanner
-// ═══════════════════════════════════════════════════════════════════════════
+static SensorSnapshot g_snap = {};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  I2C Scanner
+// ═══════════════════════════════════════════════════════════════════════════════
 static void i2cScan() {
-    Serial.println(F("\n[I2C] ── Bus Scan ─────────────────────────────────"));
-    Serial.println(F("        Address  │ Device"));
-    Serial.println(F("        ─────────┼──────────────────────────────"));
+    Serial.println(F("\n[I2C] ── Bus Scan ──────────────────────────────────"));
     uint8_t found = 0;
     for (uint8_t addr = 1; addr < 127; addr++) {
         Wire.beginTransmission(addr);
         if (Wire.endTransmission() == 0) {
-            const char* label = "Unknown";
+            const char *label = "Unknown";
             switch (addr) {
-                case 0x15: label = "CST816  Touch controller"; break;
-                case 0x46: label = "BMP580  (SDO = GND)     "; break;
-                case 0x47: label = "BMP580  (SDO = VCC)     "; break;
-                case 0x6A: label = "QMI8658 IMU (built-in)  "; break;
-                case 0x6B: label = "QMI8658 IMU (built-in)  "; break;
-                case 0x7E: label = "Unknown (PMIC or Touch?)"; break;
+                case 0x38: label = "FT3168  Touch (0x38)    "; break;
+                case 0x46: label = "BMP580  (SDO=GND, 0x46) "; break;
+                case 0x47: label = "BMP580  (SDO=VCC, 0x47) "; break;
+                case 0x6A: label = "QMI8658 IMU (SA0=GND)   "; break;
+                case 0x6B: label = "QMI8658 IMU (SA0=VCC)   "; break;
+                case 0x7E: label = "Unknown (PMIC/Touch?)   "; break;
                 default:   label = "Unknown device          "; break;
             }
-            Serial.printf("          0x%02X   │ %s\n", addr, label);
+            Serial.printf("  0x%02X → %s\n", addr, label);
             found++;
         }
     }
-    Serial.println(F("        ─────────────────────────────────────────────"));
     if (found == 0)
-        Serial.println(F("  *** Khong tim thay thiet bi I2C! Kiem tra SDA/SCL. ***"));
+        Serial.println(F("  *** Không tìm thấy thiết bị I2C! ***"));
     else
-        Serial.printf("  Tong cong: %u thiet bi\n", found);
-    Serial.println();
+        Serial.printf("  Tổng: %u thiết bị\n", found);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Init Sensors
-// ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BMP580 Init
+// ═══════════════════════════════════════════════════════════════════════════════
 static bool initBMP() {
-    Serial.printf("[BMP] Ket noi 0x%02X ... ", BMP580_I2C_ADDR);
+    Serial.printf("[BMP] Kết nối 0x%02X ... ", BMP580_I2C_ADDR);
     if (!bmp.begin(BMP580_I2C_ADDR, &Wire)) {
-        Serial.println(F("THAT BAI. Kiem tra day I2C & chan SDO."));
+        Serial.println(F("THẤT BẠI."));
         return false;
     }
     bmp.setTemperatureOversampling(BMP5XX_OVERSAMPLING_8X);
@@ -110,245 +200,264 @@ static bool initBMP() {
     return true;
 }
 
-static bool initIMU() {
-    Serial.printf("[IMU] Ket noi QMI8658 (0x6A) ... ");
-    if (!qmi.begin(Wire, 0x6A, I2C_SDA_PIN, I2C_SCL_PIN)) {
-        Serial.println(F("THAT BAI."));
-        return false;
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Đọc sensors → g_snap
+// ═══════════════════════════════════════════════════════════════════════════════
+static void readSensors() {
+    uint32_t now = millis();
+
+    // ── GPS ───────────────────────────────────────────────────────────────────
+    g_snap.gps.fix_valid    = gpsParser.location.isValid();
+    g_snap.gps.satellites   = gpsParser.satellites.isValid() ?
+                               gpsParser.satellites.value() : 0;
+    g_snap.gps.speed_kmh    = gpsParser.speed.isValid() ?
+                               gpsParser.speed.kmph() : 0.0f;
+    g_snap.gps.altitude_m   = gpsParser.altitude.isValid() ?
+                               gpsParser.altitude.meters() : 0.0f;
+    g_snap.gps.course_deg   = gpsParser.course.isValid() ?
+                               (float)gpsParser.course.deg() : 0.0f;
+    g_snap.gps.chars_proc   = gpsParser.charsProcessed();
+    g_snap.gps.fixes        = gpsParser.sentencesWithFix();
+    g_snap.gps.checksum_err = gpsParser.failedChecksum();
+    if (g_snap.gps.fix_valid) {
+        g_snap.gps.latitude  = gpsParser.location.lat();
+        g_snap.gps.longitude = gpsParser.location.lng();
     }
-    qmi.configAccelerometer(SensorQMI8658::ACC_RANGE_4G, SensorQMI8658::ACC_ODR_1000Hz, SensorQMI8658::LPF_MODE_0);
-    qmi.configGyroscope(SensorQMI8658::GYR_RANGE_256DPS, SensorQMI8658::GYR_ODR_896_8Hz, SensorQMI8658::LPF_MODE_3);
-    qmi.enableAccelerometer();
-    qmi.enableGyroscope();
-    Serial.println(F("OK"));
-    return true;
+
+    // ── BMP580 ────────────────────────────────────────────────────────────────
+    if (bmpOk && bmp.performReading()) {
+        g_snap.baro.pressure_hpa  = bmp.pressure;
+        g_snap.baro.temperature_c = bmp.temperature;
+        float ratio = g_snap.baro.pressure_hpa / 1013.25f;
+        g_snap.baro.altitude_m = 44330.0f * (1.0f - powf(ratio, 0.1903f));
+        g_snap.baro.valid = true;
+    } else {
+        g_snap.baro.valid = false;
+    }
+
+    // ── QMI8658 (Direct Wire) ─────────────────────────────────────────────────
+    if (qmiOk) {
+        readQMI8658(imuPitch, imuRoll);
+        g_snap.imu.pitch_deg = imuPitch;
+        g_snap.imu.roll_deg  = imuRoll;
+        g_snap.imu.valid = true;
+    } else {
+        g_snap.imu.valid = false;
+    }
+
+    // ── System ────────────────────────────────────────────────────────────────
+    g_snap.sys.uptime_s    = (now - tBoot) / 1000;
+    g_snap.sys.battery_v   = 0.0f;
+    g_snap.sys.battery_pct = 0;
+    g_snap.sys.sd_present  = false;
+    g_snap.sys.sd_ok       = false;
+    g_snap.sys.sd_free_mb  = 0;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Print and UI Update
-// ═══════════════════════════════════════════════════════════════════════════
-static void update_lvgl_ui(float temp, float pres, float speed_kmh, uint32_t sats, double lat, double lng, float alt, float course, bool gps_valid, bool bmp_valid, float pitch, float roll) {
-    if (example_lvgl_lock(-1)) {
-        char buf[64];
-        if (label_header) {
-            snprintf(buf, sizeof(buf), "Sats: %lu | Bat: 100%%", sats);
-            lv_label_set_text(label_header, buf);
-        }
-        
-        if (label_compass) {
-            const char* dir = "N";
-            if (course < 22.5 || course >= 337.5) dir = "N";
-            else if (course < 67.5) dir = "NE";
-            else if (course < 112.5) dir = "E";
-            else if (course < 157.5) dir = "SE";
-            else if (course < 202.5) dir = "S";
-            else if (course < 247.5) dir = "SW";
-            else if (course < 292.5) dir = "W";
-            else if (course < 337.5) dir = "NW";
-            // Removed gps_valid check to always show test data
-            snprintf(buf, sizeof(buf), "%s (%.0f deg)", dir, course);
-            lv_label_set_text(label_compass, buf);
-        }
-
-        if (label_speed) {
-            snprintf(buf, sizeof(buf), "%.1f km/h", speed_kmh);
-            lv_label_set_text(label_speed, buf);
-        }
-        
-        if (label_coords) {
-            if (gps_valid) {
-                snprintf(buf, sizeof(buf), "Lat: %.6f\nLng: %.6f\nAlt: %.1f m", lat, lng, alt);
-            } else {
-                snprintf(buf, sizeof(buf), "Lat: --.------\nLng: --.------\nAlt: -- m");
-            }
-            lv_label_set_text(label_coords, buf);
-        }
-        
-        if (label_env) {
-            if (bmp_valid) {
-                snprintf(buf, sizeof(buf), "T: %.1f C | P: %.1f hPa", temp, pres);
-            } else {
-                snprintf(buf, sizeof(buf), "T: -- C | P: -- hPa");
-            }
-            lv_label_set_text(label_env, buf);
-        }
-        
-        if (label_imu) {
-            snprintf(buf, sizeof(buf), "Tilt: P:%.0f  R:%.0f", pitch, roll);
-            lv_label_set_text(label_imu, buf);
-        }
-        example_lvgl_unlock();
-    }
-}
-
-static void printData() {
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Serial print (dùng integer split, không dùng %f)
+// ═══════════════════════════════════════════════════════════════════════════════
+static void printSerial() {
     Serial.println(F("\n=================================================="));
     Serial.println(F("  [GPS] ATGM336H"));
-    
-    double lat = 0.0, lng = 0.0;
-    float speed = 0.0, alt = 0.0, course = 0.0;
-    uint32_t sats = 0;
-    bool gps_valid = false;
-    
-    if (gps.location.isValid()) {
-        lat = gps.location.lat();
-        lng = gps.location.lng();
-        gps_valid = true;
-        Serial.printf("    Lat / Lon  : %+.6f,  %+.6f\n", lat, lng);
+    if (g_snap.gps.fix_valid) {
+        double aLat = g_snap.gps.latitude  >= 0 ? g_snap.gps.latitude  : -g_snap.gps.latitude;
+        double aLon = g_snap.gps.longitude >= 0 ? g_snap.gps.longitude : -g_snap.gps.longitude;
+        long   lI   = (long)aLat, lonI = (long)aLon;
+        long   lD   = (long)((aLat-lI)*1000000), lonD = (long)((aLon-lonI)*1000000);
+        Serial.printf("    Lat/Lon: %ld.%06ld%c / %ld.%06ld%c\n",
+            lI, lD, g_snap.gps.latitude  >= 0 ? 'N' : 'S',
+            lonI, lonD, g_snap.gps.longitude >= 0 ? 'E' : 'W');
     } else {
-        Serial.println(F("    Vi tri     : Chua fix (dang tim ve tinh...)"));
+        Serial.println(F("    Vị trí : Chưa fix..."));
     }
-    
-    if (gps.speed.isValid()) speed = gps.speed.kmph();
-    if (gps.satellites.isValid()) sats = gps.satellites.value();
-    if (gps.altitude.isValid()) alt = gps.altitude.meters();
-    if (gps.course.isValid()) course = gps.course.deg();
-    
-    Serial.printf("    Toc do     : %.1f km/h\n", speed);
-    Serial.printf("    Ve tinh    : %u\n", sats);
-    Serial.printf("    Altitude   : %.1f m (GPS)\n", alt);
-    Serial.printf("    Course     : %.1f°\n", course);
-    Serial.printf("    NMEA       : chars=%lu  fixes=%lu  err=%lu\n", gps.charsProcessed(), gps.sentencesWithFix(), gps.failedChecksum());
+    {
+        long sI = (long)g_snap.gps.speed_kmh;
+        long sD = (long)((g_snap.gps.speed_kmh-sI)*10);
+        Serial.printf("    Speed  : %ld.%01ld km/h  Sats: %lu  Course: %ld deg\n",
+            sI, sD, (unsigned long)g_snap.gps.satellites,
+            (long)g_snap.gps.course_deg);
+        Serial.printf("    NMEA   : chars=%lu  fixes=%lu  err=%lu\n",
+            (unsigned long)g_snap.gps.chars_proc,
+            (unsigned long)g_snap.gps.fixes,
+            (unsigned long)g_snap.gps.checksum_err);
+    }
 
     Serial.println(F("  [BMP] BMP580"));
-    float temp = 0.0, pres = 0.0;
-    bool bmp_valid = false;
-    if (!bmpOk) {
-        Serial.println(F("    Sensor chua san sang - kiem tra I2C."));
-    } else if (!bmp.performReading()) {
-        Serial.println(F("    ERROR: performReading() that bai!"));
+    if (g_snap.baro.valid) {
+        long tI = (long)g_snap.baro.temperature_c;
+        long tD = (long)((g_snap.baro.temperature_c >= 0 ?
+                   g_snap.baro.temperature_c-tI : -g_snap.baro.temperature_c+tI)*100);
+        long pI = (long)g_snap.baro.pressure_hpa;
+        long pD = (long)((g_snap.baro.pressure_hpa-pI)*100);
+        long aI = (long)g_snap.baro.altitude_m;
+        long aD = (long)((g_snap.baro.altitude_m >= 0 ?
+                   g_snap.baro.altitude_m-aI : -g_snap.baro.altitude_m+aI)*10);
+        Serial.printf("    T: %ld.%02ld C  P: %ld.%02ld hPa  Alt: %ld.%01ld m\n",
+            tI, labs(tD), pI, labs(pD), aI, labs(aD));
     } else {
-        pres = bmp.pressure;
-        temp = bmp.temperature;
-        bmp_valid = true;
-        Serial.printf("    Nhiet do   : %.2f C\n", temp);
-        Serial.printf("    Ap suat    : %.2f hPa\n", pres);
+        Serial.println(F("    Sensor chưa sẵn sàng."));
     }
-    
-    Serial.println(F("  [IMU] QMI8658"));
-    if (imuOk) {
-        float ax, ay, az;
-        if (qmi.getAccelerometer(ax, ay, az)) {
-            imuPitch = atan2(-ax, sqrt(ay * ay + az * az)) * 180.0 / PI;
-            imuRoll  = atan2(ay, az) * 180.0 / PI;
-            Serial.printf("    Pitch/Roll : %.1f° / %.1f°\n", imuPitch, imuRoll);
-        }
+
+    Serial.println(F("  [IMU] QMI8658 (direct Wire)"));
+    if (g_snap.imu.valid) {
+        long piI = (long)g_snap.imu.pitch_deg;
+        long piD = (long)((g_snap.imu.pitch_deg >= 0 ?
+                    g_snap.imu.pitch_deg-piI : -g_snap.imu.pitch_deg+piI)*10);
+        long riI = (long)g_snap.imu.roll_deg;
+        long riD = (long)((g_snap.imu.roll_deg >= 0 ?
+                    g_snap.imu.roll_deg-riI : -g_snap.imu.roll_deg+riI)*10);
+        Serial.printf("    Pitch: %ld.%01ld deg  Roll: %ld.%01ld deg\n",
+            piI, labs(piD), riI, labs(riD));
     } else {
         Serial.println(F("    IMU offline."));
     }
-    
+
+    uint32_t h = g_snap.sys.uptime_s/3600;
+    uint32_t m = (g_snap.sys.uptime_s%3600)/60;
+    uint32_t s = g_snap.sys.uptime_s%60;
+    Serial.printf("  [SYS] Uptime: %02lu:%02lu:%02lu\n",
+        (unsigned long)h, (unsigned long)m, (unsigned long)s);
+    if (g_snap.sys.sd_ok) {
+        Serial.printf("  [SYS] SD Card: OK (%lu MB) — logging /sdcard/tracker_log.csv\n", (unsigned long)g_snap.sys.sd_free_mb);
+    } else {
+        Serial.println(F("  [SYS] SD Card: Chưa cắm thẻ / Chưa mount"));
+    }
     Serial.println(F("==================================================\n"));
-    
-    update_lvgl_ui(temp, pres, speed, sats, lat, lng, alt, course, gps_valid, bmp_valid, imuPitch, imuRoll);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 //  setup()
-// ═══════════════════════════════════════════════════════════════════════════
-static void build_dashboard() {
-    lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0x000000), 0);
-
-    label_header = lv_label_create(lv_scr_act());
-    lv_label_set_text(label_header, "Sats: 0 | Bat: 100%");
-    lv_obj_set_style_text_color(label_header, lv_color_hex(0x00FFFF), 0);
-    lv_obj_set_style_text_font(label_header, &lv_font_montserrat_20, 0);
-    lv_obj_align(label_header, LV_ALIGN_TOP_MID, 0, 10);
-
-    label_compass = lv_label_create(lv_scr_act());
-    lv_label_set_text(label_compass, "N (0 deg)");
-    lv_obj_set_style_text_color(label_compass, lv_color_hex(0xFF8800), 0);
-    lv_obj_set_style_text_font(label_compass, &lv_font_montserrat_32, 0);
-    lv_obj_align(label_compass, LV_ALIGN_TOP_MID, 0, 50);
-
-    label_speed = lv_label_create(lv_scr_act());
-    lv_label_set_text(label_speed, "0.0 km/h");
-    lv_obj_set_style_text_color(label_speed, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(label_speed, &lv_font_montserrat_32, 0);
-    lv_obj_align(label_speed, LV_ALIGN_CENTER, 0, -40);
-
-    label_coords = lv_label_create(lv_scr_act());
-    lv_label_set_text(label_coords, "Lat: --.------\nLng: --.------\nAlt: -- m");
-    lv_obj_set_style_text_color(label_coords, lv_color_hex(0xFFFF00), 0);
-    lv_obj_set_style_text_font(label_coords, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_align(label_coords, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(label_coords, LV_ALIGN_CENTER, 0, 40);
-
-    label_imu = lv_label_create(lv_scr_act());
-    lv_label_set_text(label_imu, "Tilt: P: 0  R: 0");
-    lv_obj_set_style_text_color(label_imu, lv_color_hex(0xAAAAAA), 0);
-    lv_obj_set_style_text_font(label_imu, &lv_font_montserrat_20, 0);
-    lv_obj_align(label_imu, LV_ALIGN_BOTTOM_MID, 0, -45);
-
-    label_env = lv_label_create(lv_scr_act());
-    lv_label_set_text(label_env, "T: -- C | P: -- hPa");
-    lv_obj_set_style_text_color(label_env, lv_color_hex(0x00FF00), 0);
-    lv_obj_set_style_text_font(label_env, &lv_font_montserrat_20, 0);
-    lv_obj_align(label_env, LV_ALIGN_BOTTOM_MID, 0, -10);
-}
-
+// ═══════════════════════════════════════════════════════════════════════════════
 void setup() {
     Serial.begin(115200);
-    delay(2000);   // chờ USB CDC enumerate
-    
-    Serial.println(F("\n\n╔══════════════════════════════════════════════════╗"));
-    Serial.println(F("║  ESP32-C6 Outdoor Tracker – Bring-Up v4       ║"));
+    delay(2000);
+    tBoot = millis();
+
+    Serial.println(F("\n╔══════════════════════════════════════════════════╗"));
+    Serial.println(F("║  ESP32-C6 Outdoor Tracker — Milestone 4         ║"));
+    Serial.println(F("║  LVGL Dashboard + QMI8658 Direct Wire           ║"));
     Serial.println(F("╚══════════════════════════════════════════════════╝\n"));
     Serial.flush();
 
-    Serial.printf("[I2C] Init: SDA=GPIO%d  SCL=GPIO%d  400kHz\n", I2C_SDA_PIN, I2C_SCL_PIN);
+    // ── I2C ──────────────────────────────────────────────────────────────────
+    Serial.printf("[I2C] Init: SDA=GPIO%d  SCL=GPIO%d  100kHz\n",
+                  I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-    Wire.setClock(400000UL);
+    Wire.setClock(100000UL); // Hạ xuống 100kHz để tăng độ ổn định cho cảm biến và touch
+    Wire.setTimeout(20);
     delay(150);
     i2cScan();
     Serial.flush();
 
+    // ── BMP580 ────────────────────────────────────────────────────────────────
     bmpOk = initBMP();
-    imuOk = initIMU();
+
+    // ── QMI8658 Direct Wire ───────────────────────────────────────────────────
+    qmiOk = initQMI8658();
     Serial.flush();
 
-    Serial.printf("[GPS] Init UART1: RX=GPIO%d  TX=GPIO%d  %d baud\n", GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD);
-    Serial.flush();
-    delay(100);
+    // ── GPS ───────────────────────────────────────────────────────────────────
+    Serial.printf("[GPS] Init UART1: RX=GPIO%d  TX=GPIO%d  %d baud\n",
+                  GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD);
     gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
     tLastGps = millis();
-    Serial.println(F("[GPS] Dang cho NMEA data...\n"));
+    Serial.println(F("[GPS] Đang chờ NMEA data...\n"));
+    Serial.flush();
 
-    Serial.println(F("[SYS] Khoi tao man hinh AMOLED..."));
+    // ── Display + LVGL (BSP: FreeRTOS LVGL task) ─────────────────────────────
+    Serial.println(F("[SYS] Khởi tạo AMOLED + LVGL..."));
     lcd_lvgl_Init();
 
+    // ── Build Dashboard UI ────────────────────────────────────────────────────
     if (example_lvgl_lock(-1)) {
-        build_dashboard();
+        ui_dashboard_init();
         example_lvgl_unlock();
     }
-    Serial.println(F("[SYS] Man hinh OK. Vao vong lap chinh...\n"));
+    Serial.println(F("[SYS] Dashboard OK — swipe để chuyển trang.\n"));
     Serial.flush();
+
+    // ── MicroSD Logger (SPI2, CS=GPIO15) ──────────────────────────────────────
+    sd_logger_init(&g_snap);
+    Serial.flush();
+
+    tLastSensor = millis();
+    tLastUiUpd  = millis();
+    tLastPrint  = millis();
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  loop()
+// ═══════════════════════════════════════════════════════════════════════════════
 void loop() {
     const uint32_t now = millis();
 
+    // ── Đọc ADC Pin (Mỗi 2 giây) ─────────────────────────────────────────────
+    static uint32_t lastBat = 0;
+    if (now - lastBat >= 2000) {
+        lastBat = now;
+        analogReadResolution(12); // Đảm bảo 12-bit
+        int adc = analogRead(0);
+        float volts = (adc / 4095.0f) * 3.3f * 2.0f;
+        g_snap.sys.battery_v = volts;
+        
+        // Map Volts -> % (Xấp xỉ cho Li-Po 3.7V)
+        if (volts >= 4.15f) g_snap.sys.battery_pct = 100;
+        else if (volts <= 3.30f) g_snap.sys.battery_pct = 0;
+        else g_snap.sys.battery_pct = (uint8_t)(((volts - 3.30f) / (4.15f - 3.30f)) * 100.0f);
+    }
+
+    // ── 1. Feed GPS parser ────────────────────────────────────────────────────
     while (gpsSerial.available()) {
-        char c = gpsSerial.read();
-        if (gps.encode(c)) {
+        if (gpsParser.encode((char)gpsSerial.read())) {
             tLastGps = now;
         }
     }
 
+    // ── 2. GPS timeout warn ───────────────────────────────────────────────────
     if (now - tLastGps > GPS_TIMEOUT_MS) {
-        Serial.println(F("[GPS] ⚠️ Khong nhan du lieu >12s!"));
+        Serial.println(F("[GPS] ⚠️ Không nhận dữ liệu > 12s!"));
         tLastGps = now;
     }
 
-    if (now - tLastPrint >= PRINT_INTERVAL_MS) {
-        tLastPrint = now;
-        
-        static uint8_t printCount = 0;
-        if (printCount++ % 5 == 0) {
-            i2cScan();
-            if (!bmpOk) bmpOk = initBMP();
-            if (!imuOk) imuOk = initIMU();
+    // ── 3. Đọc sensor mỗi 500ms ──────────────────────────────────────────────
+    if (now - tLastSensor >= SENSOR_READ_MS) {
+        tLastSensor = now;
+        if (example_lvgl_lock(-1)) {
+            readSensors();
+            example_lvgl_unlock();
         }
-        
-        printData();
     }
+
+    // ── 4. Update LVGL UI ────────────────────────────────────────────────────
+    if (now - tLastUiUpd >= UI_UPDATE_MS) {
+        tLastUiUpd = now;
+        if (example_lvgl_lock(-1)) {
+            ui_dashboard_update(&g_snap);
+            example_lvgl_unlock();
+        }
+    }
+
+    // ── 5. Serial debug mỗi 2s ───────────────────────────────────────────────
+    if (now - tLastPrint >= SERIAL_PRINT_MS) {
+        tLastPrint = now;
+        if (printCount++ % I2C_RETRY_EVERY == 0) {
+            if (example_lvgl_lock(-1)) {
+                if (!bmpOk) bmpOk = initBMP();
+                if (!qmiOk) qmiOk = initQMI8658();
+                example_lvgl_unlock();
+            }
+        }
+        printSerial();
+    }
+
+    // ── 6. Ghi log thẻ nhớ định kỳ (mỗi 1 giây) ──────────────────────────────
+    static uint32_t tLastSdLog = 0;
+    if (now - tLastSdLog >= 1000) {
+        tLastSdLog = now;
+        sd_logger_log(&g_snap);
+    }
+
+    // ── 7. Yield cho LVGL FreeRTOS task ──────────────────────────────────────
+    delay(5);
 }

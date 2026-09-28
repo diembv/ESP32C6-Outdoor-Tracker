@@ -2,7 +2,19 @@
 #include "esp_lcd_sh8601.h"
 #include "lcd_config.h"
 #include "FT3168.h"
-static SemaphoreHandle_t lvgl_mux = NULL; //mutex semaphores
+
+/* ── Static forward declarations (private to this translation unit) ────────── */
+static bool example_notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t panel_io,
+                                             esp_lcd_panel_io_event_data_t *edata,
+                                             void *user_ctx);
+static void example_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
+                                   lv_color_t *color_map);
+static void example_increase_lvgl_tick(void *arg);
+static void example_lvgl_port_task(void *arg);
+static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data);
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+static SemaphoreHandle_t lvgl_mux = NULL; /* LVGL mutex semaphore */
 #define LCD_HOST    SPI2_HOST
 
 //#define EXAMPLE_Rotate_90
@@ -109,19 +121,11 @@ void lcd_lvgl_Init(void)
   lvgl_mux = xSemaphoreCreateMutex(); //mutex semaphores
   assert(lvgl_mux);
   xTaskCreate(example_lvgl_port_task, "LVGL", EXAMPLE_LVGL_TASK_STACK_SIZE, NULL, EXAMPLE_LVGL_TASK_PRIORITY, NULL);
-  if (example_lvgl_lock(-1)) 
-  {   
-    lv_demo_widgets();      /* A widgets example */
-    //lv_demo_music();        /* A modern, smartphone-like music player demo. */
-    //lv_demo_stress();       /* A stress test for LVGL. */
-    //lv_demo_benchmark();    /* A demo to measure the performance of LVGL or to compare different settings. */
-
-    // Release the mutex
-    example_lvgl_unlock();
-  }
+  /* Dashboard UI sẽ được build từ main.cpp sau khi hàm này trả về */
+  /* Không gọi lv_demo_widgets() — LV_USE_DEMO_WIDGETS đã tắt */
 }
 
-static bool example_lvgl_lock(int timeout_ms)
+bool example_lvgl_lock(int timeout_ms)
 {
   assert(lvgl_mux && "bsp_display_start must be called first");
 
@@ -129,7 +133,7 @@ static bool example_lvgl_lock(int timeout_ms)
   return xSemaphoreTake(lvgl_mux, timeout_ticks) == pdTRUE;
 }
 
-static void example_lvgl_unlock(void)
+void example_lvgl_unlock(void)
 {
   assert(lvgl_mux && "bsp_display_start must be called first");
   xSemaphoreGive(lvgl_mux);

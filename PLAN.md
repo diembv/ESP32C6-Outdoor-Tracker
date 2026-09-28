@@ -191,102 +191,57 @@ flowchart LR
 
 ---
 
-## [ ] Milestone 4 — LVGL Dashboard Multi-Screen (3 Trang) 🔧 ĐANG TRIỂN KHAI
+### Khe Thẻ Nhớ Micro SD (Tích hợp trên board)
+Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 với màn hình AMOLED:
 
-**Mục tiêu:** Giao diện đa trang dùng `lv_tileview` — người dùng vuốt trái/phải để chuyển trang.
-
-### Kiến trúc: `lv_tileview` với swipe gesture (FT3168 Touch)
-
-```
-[ Trang 1: Outdoor ] ←→ [ Trang 2: Navigation ] ←→ [ Trang 3: System ]
-```
-
----
-
-### Trang 1 — Outdoor Sensors
-
-```
-┌──────────────────────────┐  280 px
-│  Sats: 9  |  Bat: 87%   │  Header   (cyan, size 20)
-├──────────────────────────┤
-│         5.2 km/h         │  Speed    (white, size 32)
-├──────────────────────────┤
-│     Lat: 21.027764       │
-│     Lng: 105.834160      │  Coords   (yellow, size 20)
-│     Alt: 30.4 m          │
-├──────────────────────────┤
-│  T: 31.5°C | P: 1009 hPa│  Env      (green, size 20)
-└──────────────────────────┘  456 px
-```
-
-| Widget | Nội dung | Font / Màu |
+| Tín hiệu | GPIO | Ghi chú |
 |---|---|---|
-| Header | `Sats: N \| Bat: XX%` | Size 20, Cyan |
-| Speed | `X.X km/h` | Size 32, White |
-| Coords | Lat / Lng / Alt GPS | Size 20, Yellow |
-| Env | Nhiệt độ + Áp suất hPa | Size 20, Green |
+| SD_CS | **GPIO 15** | Chip Select riêng cho thẻ nhớ |
+| SD_CLK (SCLK) | **GPIO 11** | Chung chân PCLK màn hình |
+| SD_MOSI (CMD) | **GPIO 4** | Chung chân DATA0 màn hình |
+| SD_MISO (DAT0) | **GPIO 5** | Chung chân DATA1 màn hình |
+| Host | **SPI2_HOST** | Giao tiếp qua SPI bus chung |
 
 ---
 
-### Trang 2 — Navigation & Compass
+## [x] Milestone 4 — LVGL Dashboard Multi-Screen (3 Trang) ✅ HOÀN THÀNH
 
+**Mục tiêu:** Giao diện đa trang dùng `lv_tileview` — người dùng vuốt trái/phải để chuyển trang, vuốt lên về trang chủ (Sensors).
+
+### Kiến trúc: `lv_tileview` 3 trang ngang
 ```
-┌──────────────────────────┐
-│      NE (045 deg)        │  Direction  (orange, size 32)
-├──────────────────────────┤
-│   Tilt: P: 5°  R: -2°   │  IMU Tilt   (gray, size 20)
-├──────────────────────────┤
-│  [GPS Course khi >0.5km/h│  Note       (dimgray, size 14)
-│   IMU cho Pitch/Roll]    │
-└──────────────────────────┘
+[ Trang 0: Navigation ] ←→ [ Trang 1: Sensors (Mặc định) ] ←→ [ Trang 2: System ]
 ```
+- **Trang 0 (Bên trái):** Navigation (GPS Course, Heading, La bàn số).
+- **Trang 1 (Ở giữa - Mặc định):** 
+  - GPS Position (kinh độ/vĩ độ định dạng `N / E`).
+  - Tốc độ (`km/h`), Số vệ tinh GPS.
+  - Box Environment & IMU: Dòng 1: Nhiệt độ (`°C`), Dòng 2: Áp suất (`hPa`) & Cao độ (`m`), Dòng 3: Pitch & Roll (`P: ... | R: ...`).
+- **Trang 2 (Bên phải):** System (GPS Stats, Uptime, Điện áp pin `V` và `%`, trạng thái thẻ nhớ SD).
 
-| Widget | Nội dung | Font / Màu |
-|---|---|---|
-| Direction | `NE (045 deg)` — GPS Course | Size 32, Orange |
-| IMU Tilt | `Pitch: X°  Roll: X°` | Size 20, Gray |
+### Thao tác cử chỉ (Gestures):
+- Vuốt sang trái → Trang Navigation.
+- Vuốt sang phải → Trang System.
+- **Vuốt từ dưới lên trên (Swipe Up):** Sự kiện `LV_DIR_TOP` đưa ngay lập tức về trang trung tâm (Sensors) như phím Home điện thoại.
+- Đã ẩn thanh scrollbars (không còn 3 chấm dưới đáy).
 
-> **Lưu ý:** Board không có magnetometer (la bàn từ tính).
-> La bàn dùng **GPS Course Over Ground** — chỉ chính xác khi tốc độ > 0.5 km/h.
-> IMU QMI8658 cung cấp Pitch/Roll (độ nghiêng), không phải Yaw.
+### Các khắc phục & Tối ưu quan trọng trong Milestone 4:
+1. **Khắc phục xung đột I2C (driver_ng conflict):** Gỡ bỏ `SensorLib`, viết driver trực tiếp qua `Wire` cho QMI8658 với cơ chế tự động dò địa chỉ fallback `0x6A` → `0x6B`.
+2. **Khắc phục hiện tượng Ghost Touch (chạm ảo tự nhảy trang):** Bổ sung kiểm tra lỗi I2C và lọc số điểm chạm hợp lệ (1-2) trong driver `FT3168.cpp`.
+3. **Khắc phục lỗi `[259] ESP_ERR_INVALID_STATE`:** Bao bọc mọi thao tác I2C của task chính bằng Mutex `example_lvgl_lock(-1)` để tránh đụng độ với task đọc cảm ứng ngầm của LVGL.
+4. **Tắt log hệ thống ESP32:** Cấu hình `-DCORE_DEBUG_LEVEL=0` trong `platformio.ini` để loại bỏ hoàn toàn các log cảnh báo HAL rác.
+5. **Cân chỉnh tần số quét hiển thị:** Đọc cảm biến ở 5Hz, cập nhật màn hình LVGL ở 4Hz (250ms) giúp số liệu Pitch/Roll phản hồi nhạy và êm mắt.
+6. **Đo dung lượng Pin Li-Po:** Đọc ADC từ GPIO0 (bộ chia áp tích hợp của board Waveshare) tính ra điện áp (V) và % dung lượng.
 
 ---
 
-### Trang 3 — Connectivity & System
+## [ ] Milestone 5 — Power & Storage (Đang Triển Khai)
 
-```
-┌──────────────────────────┐
-│  GPS: chars=12k fixes=0  │  GPS Stats  (white, size 20)
-├──────────────────────────┤
-│  Uptime: 00:15:32        │  Uptime     (white, size 20)
-├──────────────────────────┤
-│  Bat: 87%  (*dự phòng)   │  Battery    (yellow, size 20)
-│  SD: No card (*dự phòng) │  SD Card    (cyan, size 20)
-└──────────────────────────┘
-```
-
-> (*) Battery % và SD Card cần xác nhận thêm về hardware (ADC pin, SPI SD).
-
----
-
-### Tasks Milestone 4
-
-- [ ] Triển khai `lv_tileview` với 3 tiles nằm ngang
-- [ ] Kết nối swipe gesture từ FT3168 touch (I2C `0x38`)
-- [ ] Build Trang 1: Outdoor Sensors (layout hoàn chỉnh)
-- [ ] Build Trang 2: Navigation với compass text + IMU tilt
-- [ ] Build Trang 3: GPS stats + Uptime counter
-- [ ] `lv_timer` refresh mỗi trang theo tần suất phù hợp
-- [ ] Kiểm tra RAM usage — không vượt quá 360 KB heap
-
----
-
-## [ ] Milestone 5 — Power & Storage
-
-- [ ] Đọc ADC pin Li-Po, hiển thị % còn lại
-- [ ] Tích hợp Micro SD — log GPS track ra file `.gpx` hoặc `.csv`
-- [ ] Deep sleep khi không hoạt động
-- [ ] OTA update qua WiFi (tùy chọn)
+- [x] Đọc ADC pin Li-Po (GPIO0), hiển thị điện áp (V) và % trên màn hình System & Header
+- [ ] Khởi tạo Micro SD qua `esp_vfs_fat_sdspi_mount` (SPI2_HOST, CS=GPIO15)
+- [ ] Ghi dữ liệu hành trình GPS, áp suất, độ nghiêng định kỳ ra file `.csv` trên thẻ nhớ
+- [ ] Hiển thị dung lượng thẻ nhớ và trạng thái ghi log thực tế lên giao diện System
+- [ ] Cơ chế an toàn ngắt thẻ nhớ (flush buffer) tránh hỏng dữ liệu khi tắt nguồn
 
 ---
 

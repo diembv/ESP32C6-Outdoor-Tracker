@@ -3,3 +3,4 @@
 *.log
 build_log.txt
 scratch/
+upload_log.txt
