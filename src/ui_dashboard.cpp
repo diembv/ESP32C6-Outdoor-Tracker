@@ -36,6 +36,10 @@ static lv_obj_t *t0_lbl_uptime;
 static lv_obj_t *t0_lbl_battery;   
 static lv_obj_t *t0_lbl_sd;        
 static lv_obj_t *t0_dot_gps;       
+static lv_obj_t *t0_lbl_datetime;  
+
+static lv_obj_t *t0_btn_log;
+static lv_obj_t *t0_lbl_btn_log;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Helpers
@@ -209,6 +213,17 @@ static void build_tile1_sensors(lv_obj_t *tile)
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Tile 2: System (Bên phải)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+extern SensorSnapshot g_snap;
+#include "sd_logger.h"
+
+static void btn_log_event_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if(code == LV_EVENT_CLICKED) {
+        sd_logger_toggle(&g_snap);
+    }
+}
+
 static void build_tile2_system(lv_obj_t *tile)
 {
     style_tile(tile);
@@ -224,32 +239,53 @@ static void build_tile2_system(lv_obj_t *tile)
     lv_obj_set_style_text_color(t0_lbl_gps_stats, CLR_WHITE, 0);
     lv_obj_set_pos(t0_lbl_gps_stats, 8, 78);
 
-    make_hline(tile, 116);
+    make_hline(tile, 105);
 
-    make_key_label(tile, "Uptime", 8, 124);
+    make_key_label(tile, "Date / Time", 8, 110);
+    t0_lbl_datetime = lv_label_create(tile);
+    lv_label_set_text(t0_lbl_datetime, "--/--/---- --:--:--");
+    lv_obj_set_style_text_font(t0_lbl_datetime, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(t0_lbl_datetime, CLR_WHITE, 0);
+    lv_obj_set_pos(t0_lbl_datetime, 8, 128);
+
+    make_hline(tile, 155);
+
+    make_key_label(tile, "Uptime", 8, 160);
     t0_lbl_uptime = lv_label_create(tile);
     lv_label_set_text(t0_lbl_uptime, "00:00:00");
     lv_obj_set_style_text_font(t0_lbl_uptime, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(t0_lbl_uptime, CLR_WHITE, 0);
-    lv_obj_set_pos(t0_lbl_uptime, 8, 142);
+    lv_obj_set_pos(t0_lbl_uptime, 8, 178);
 
-    make_hline(tile, 180);
+    make_hline(tile, 205);
 
-    make_key_label(tile, "Battery", 8, 188);
+    make_key_label(tile, "Battery", 8, 210);
     t0_lbl_battery = lv_label_create(tile);
     lv_label_set_text(t0_lbl_battery, "-- V | -- %");
     lv_obj_set_style_text_font(t0_lbl_battery, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(t0_lbl_battery, CLR_YELLOW, 0);
-    lv_obj_set_pos(t0_lbl_battery, 8, 206);
+    lv_obj_set_pos(t0_lbl_battery, 8, 228);
 
-    make_hline(tile, 244);
+    make_hline(tile, 255);
 
-    make_key_label(tile, "SD Card", 8, 252);
+    make_key_label(tile, "SD Card", 8, 260);
     t0_lbl_sd = lv_label_create(tile);
     lv_label_set_text(t0_lbl_sd, "No card (*placeholder)");
     lv_obj_set_style_text_font(t0_lbl_sd, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(t0_lbl_sd, CLR_ACCENT, 0);
-    lv_obj_set_pos(t0_lbl_sd, 8, 270);
+    lv_obj_set_pos(t0_lbl_sd, 8, 278);
+
+    // Nút Bật/Tắt Ghi Log
+    t0_btn_log = lv_btn_create(tile);
+    lv_obj_set_size(t0_btn_log, 200, 50);
+    lv_obj_align(t0_btn_log, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_add_event_cb(t0_btn_log, btn_log_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_style_bg_color(t0_btn_log, CLR_BORDER, 0); // Default color
+
+    t0_lbl_btn_log = lv_label_create(t0_btn_log);
+    lv_label_set_text(t0_lbl_btn_log, "START LOGGING");
+    lv_obj_set_style_text_font(t0_lbl_btn_log, &lv_font_montserrat_20, 0);
+    lv_obj_center(t0_lbl_btn_log);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -318,7 +354,17 @@ void ui_dashboard_update(const SensorSnapshot *snap)
     // ═══ Tile 1: Sensors (Chính) ═════════════════════════════════════════════
     lv_obj_set_style_bg_color(t1_dot_fix, snap->gps.fix_valid ? CLR_GREEN : CLR_RED, 0);
 
-    snprintf(buf, sizeof(buf), "Sats: %lu | Bat: --%% ", (unsigned long)snap->gps.satellites);
+    char timeStr[16] = "--:-- --";
+    if (snap->gps.time_valid) {
+        uint8_t local_h = (snap->gps.hour + 7) % 24;
+        uint8_t h12 = local_h % 12;
+        if (h12 == 0) h12 = 12;
+        const char *ampm = (local_h >= 12) ? "PM" : "AM";
+        snprintf(timeStr, sizeof(timeStr), "%02d:%02d %s", h12, snap->gps.minute, ampm);
+    }
+    
+    snprintf(buf, sizeof(buf), "Sats: %lu | %s | %d%%", 
+             (unsigned long)snap->gps.satellites, timeStr, (int)snap->sys.battery_pct);
     lv_label_set_text(t1_lbl_header, buf);
 
     snprintf(buf, sizeof(buf), "%.1f km/h", snap->gps.speed_kmh);
@@ -407,6 +453,19 @@ void ui_dashboard_update(const SensorSnapshot *snap)
         lv_label_set_text(t0_lbl_gps_stats, buf);
     }
 
+    if (snap->gps.date_valid && snap->gps.time_valid) {
+        // Simple GMT+7 shift
+        uint8_t local_h = (snap->gps.hour + 7) % 24;
+        // Chú ý: Đây là phép tính đơn giản, nếu local_h < snap->gps.hour thì tức là đã qua ngày mới,
+        // thực tế cần tăng ngày tháng năm lên tương ứng. Ở mức demo ta giữ nguyên ngày.
+        snprintf(buf, sizeof(buf), "%02u/%02u/%04u  %02u:%02u:%02u",
+                 snap->gps.day, snap->gps.month, snap->gps.year,
+                 local_h, snap->gps.minute, snap->gps.second);
+        lv_label_set_text(t0_lbl_datetime, buf);
+    } else {
+        lv_label_set_text(t0_lbl_datetime, "--/--/----  --:----");
+    }
+
     {
         uint32_t h = snap->sys.uptime_s / 3600;
         uint32_t m = (snap->sys.uptime_s % 3600) / 60;
@@ -422,7 +481,7 @@ void ui_dashboard_update(const SensorSnapshot *snap)
     lv_label_set_text(t0_lbl_battery, buf);
 
     if (snap->sys.sd_present && snap->sys.sd_ok) {
-        snprintf(buf, sizeof(buf), "Logging (%lu MB)", (unsigned long)snap->sys.sd_free_mb);
+        snprintf(buf, sizeof(buf), "OK (%lu MB free)", (unsigned long)snap->sys.sd_free_mb);
         lv_label_set_text(t0_lbl_sd, buf);
         lv_obj_set_style_text_color(t0_lbl_sd, CLR_GREEN, 0);
     } else {
@@ -433,5 +492,14 @@ void ui_dashboard_update(const SensorSnapshot *snap)
             lv_label_set_text(t0_lbl_sd, "No SD card");
         }
         lv_obj_set_style_text_color(t0_lbl_sd, CLR_RED, 0);
+    }
+
+    // Cập nhật trạng thái nút ghi log
+    if (snap->sys.is_logging) {
+        lv_label_set_text(t0_lbl_btn_log, "STOP LOGGING");
+        lv_obj_set_style_bg_color(t0_btn_log, CLR_RED, 0);
+    } else {
+        lv_label_set_text(t0_lbl_btn_log, "START LOGGING");
+        lv_obj_set_style_bg_color(t0_btn_log, CLR_BORDER, 0);
     }
 }

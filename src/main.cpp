@@ -152,7 +152,7 @@ static uint32_t tLastGps     = 0;
 static uint32_t tBoot        = 0;
 static uint8_t  printCount   = 0;
 
-static SensorSnapshot g_snap = {};
+SensorSnapshot g_snap = {};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  I2C Scanner
@@ -205,37 +205,61 @@ static bool initBMP() {
 // ═══════════════════════════════════════════════════════════════════════════════
 static void readSensors() {
     uint32_t now = millis();
+    static uint32_t lastSlowRead = 0;
+    bool doSlowRead = (now - lastSlowRead >= 1000) || (lastSlowRead == 0);
 
-    // ── GPS ───────────────────────────────────────────────────────────────────
-    g_snap.gps.fix_valid    = gpsParser.location.isValid();
-    g_snap.gps.satellites   = gpsParser.satellites.isValid() ?
-                               gpsParser.satellites.value() : 0;
-    g_snap.gps.speed_kmh    = gpsParser.speed.isValid() ?
-                               gpsParser.speed.kmph() : 0.0f;
-    g_snap.gps.altitude_m   = gpsParser.altitude.isValid() ?
-                               gpsParser.altitude.meters() : 0.0f;
-    g_snap.gps.course_deg   = gpsParser.course.isValid() ?
-                               (float)gpsParser.course.deg() : 0.0f;
-    g_snap.gps.chars_proc   = gpsParser.charsProcessed();
-    g_snap.gps.fixes        = gpsParser.sentencesWithFix();
-    g_snap.gps.checksum_err = gpsParser.failedChecksum();
-    if (g_snap.gps.fix_valid) {
-        g_snap.gps.latitude  = gpsParser.location.lat();
-        g_snap.gps.longitude = gpsParser.location.lng();
+    if (doSlowRead) {
+        lastSlowRead = now;
+
+        // ── GPS ───────────────────────────────────────────────────────────────────
+        g_snap.gps.fix_valid    = gpsParser.location.isValid();
+        g_snap.gps.satellites   = gpsParser.satellites.isValid() ?
+                                   gpsParser.satellites.value() : 0;
+        g_snap.gps.speed_kmh    = gpsParser.speed.isValid() ?
+                                   gpsParser.speed.kmph() : 0.0f;
+        g_snap.gps.altitude_m   = gpsParser.altitude.isValid() ?
+                                   gpsParser.altitude.meters() : 0.0f;
+        g_snap.gps.course_deg   = gpsParser.course.isValid() ?
+                                   (float)gpsParser.course.deg() : 0.0f;
+        g_snap.gps.chars_proc   = gpsParser.charsProcessed();
+        g_snap.gps.fixes        = gpsParser.sentencesWithFix();
+        g_snap.gps.checksum_err = gpsParser.failedChecksum();
+        if (g_snap.gps.fix_valid) {
+            g_snap.gps.latitude  = gpsParser.location.lat();
+            g_snap.gps.longitude = gpsParser.location.lng();
+        }
+
+        // ── GPS Time & Date ───────────────────────────────────────────────────────
+        g_snap.gps.date_valid = gpsParser.date.isValid();
+        if (g_snap.gps.date_valid) {
+            g_snap.gps.year  = gpsParser.date.year();
+            g_snap.gps.month = gpsParser.date.month();
+            g_snap.gps.day   = gpsParser.date.day();
+        }
+
+        g_snap.gps.time_valid = gpsParser.time.isValid();
+        if (g_snap.gps.time_valid) {
+            // Store raw UTC time. We will convert to local time in the UI
+            g_snap.gps.hour   = gpsParser.time.hour();
+            g_snap.gps.minute = gpsParser.time.minute();
+            g_snap.gps.second = gpsParser.time.second();
+        }
+
+        // ── BMP580 ────────────────────────────────────────────────────────────────
+        if (bmpOk && bmp.performReading()) {
+            g_snap.baro.pressure_hpa  = bmp.pressure;
+            g_snap.baro.temperature_c = bmp.temperature;
+            float ratio = g_snap.baro.pressure_hpa / 1013.25f;
+            g_snap.baro.altitude_m = 44330.0f * (1.0f - powf(ratio, 0.1903f));
+            g_snap.baro.valid = true;
+        } else {
+            g_snap.baro.valid = false;
+        }
+        
+        g_snap.sys.uptime_s = (now - tBoot) / 1000;
     }
 
-    // ── BMP580 ────────────────────────────────────────────────────────────────
-    if (bmpOk && bmp.performReading()) {
-        g_snap.baro.pressure_hpa  = bmp.pressure;
-        g_snap.baro.temperature_c = bmp.temperature;
-        float ratio = g_snap.baro.pressure_hpa / 1013.25f;
-        g_snap.baro.altitude_m = 44330.0f * (1.0f - powf(ratio, 0.1903f));
-        g_snap.baro.valid = true;
-    } else {
-        g_snap.baro.valid = false;
-    }
-
-    // ── QMI8658 (Direct Wire) ─────────────────────────────────────────────────
+    // ── QMI8658 (Direct Wire - Đọc mỗi 200ms / 5Hz) ───────────────────────────
     if (qmiOk) {
         readQMI8658(imuPitch, imuRoll);
         g_snap.imu.pitch_deg = imuPitch;
@@ -244,8 +268,6 @@ static void readSensors() {
     } else {
         g_snap.imu.valid = false;
     }
-
-    g_snap.sys.uptime_s    = (now - tBoot) / 1000;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -11,13 +11,16 @@ extern "C" {
 bool sd_logger_init(SensorSnapshot *snap);
 
 // Ghi một dòng log CSV dữ liệu cảm biến
-void sd_logger_log(const SensorSnapshot *snap);
+void sd_logger_log(SensorSnapshot *snap);
 
 // Trả về trạng thái thẻ nhớ
 bool sd_logger_is_ok(void);
 
 // Đóng file an toàn trước khi tắt máy hoặc rút thẻ
 void sd_logger_flush(void);
+
+// Toggle logging state and file creation
+void sd_logger_toggle(SensorSnapshot *snap);
 
 #ifdef __cplusplus
 }

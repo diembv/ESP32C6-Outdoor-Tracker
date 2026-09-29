@@ -51,6 +51,17 @@ struct GpsData {
     float    course_deg;    // hướng di chuyển 0–359.9°
     uint32_t satellites;    // số vệ tinh lock
     bool     fix_valid;     // true = GPS fix hợp lệ
+    
+    // GPS Time & Date
+    bool     time_valid;
+    bool     date_valid;
+    uint16_t year;
+    uint8_t  month;
+    uint8_t  day;
+    uint8_t  hour;
+    uint8_t  minute;
+    uint8_t  second;
+
     uint32_t chars_proc;    // NMEA chars processed
     uint32_t fixes;         // sentences with fix
     uint32_t checksum_err;  // failed checksum
@@ -77,6 +88,7 @@ struct SysData {
     bool     sd_present;    // SD có mặt
     bool     sd_ok;         // SD OK
     uint32_t sd_free_mb;    // SD free MB
+    bool     is_logging;    // Trạng thái đang ghi log
 };
 
 struct SensorSnapshot {

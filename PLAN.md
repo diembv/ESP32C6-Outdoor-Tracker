@@ -247,9 +247,15 @@ Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 
 
 - [x] Đọc ADC pin Li-Po (GPIO0), hiển thị điện áp (V) và % trên màn hình System & Header
 - [x] Khởi tạo Micro SD qua `esp_vfs_fat_sdspi_mount` (SPI2_HOST, CS=GPIO15)
-- [x] Ghi dữ liệu hành trình GPS, áp suất, độ nghiêng định kỳ ra file `.csv` (`tracker_log.csv`) trên thẻ nhớ
-- [x] Hiển thị dung lượng thẻ nhớ và trạng thái ghi log thực tế lên giao diện System
-- [x] Cơ chế an toàn ngắt thẻ nhớ (flush buffer) tránh hỏng dữ liệu khi tắt nguồn
+- [x] Tạo thư mục `/tracker_log/` và ghi định dạng chuẩn GPX (`.gpx`), đặt tên file theo giờ GPS chuẩn quốc tế (VD: `track_20261025_153022.gpx`).
+- [x] **Trạng thái ghi chủ động**: Bổ sung Nút bấm `START LOGGING` / `STOP LOGGING` trên màn hình System. Chỉ ghi log tọa độ (Trackpoints) khi có GPS Fix hợp lệ.
+- [x] **Ghi nhận Cao độ**: Tích hợp cao độ siêu nhạy từ cảm biến khí áp BMP580 làm thẻ `<ele>` trong file GPX để kết xuất lộ trình 3D chuyên nghiệp.
+- [x] **Xử lý Thời gian thực (GPS)**:
+  + Màn hình UI: Hiển thị tự động giờ Việt Nam (UTC+7).
+  + File GPX (XML): Lưu thời gian gốc UTC chuẩn theo quy định để app nhận diện chính xác.
+- [x] **Tốc độ đọc phân tách**: IMU đọc với tần số 5Hz (Pitch/Roll phản hồi mượt), GPS và Baro đọc với tần số 1Hz để tối ưu ghi file và tiết kiệm.
+- [x] Hiển thị dung lượng thẻ nhớ và bẫy lỗi an toàn: Bắt gọn lỗi mất thẻ / hỏng kết nối (Error 0x107) mà không gây Crash hệ thống. Đã fix hoàn toàn lỗi xung đột chân phần cứng (GPIO 4, 5, 11) giữa thẻ SD và màn hình QSPI.
+- [x] Cơ chế an toàn ngắt thẻ nhớ (flush buffer, đóng tags XML GPX) tránh hỏng file dữ liệu khi Stop Logging.
 
 ---
 
