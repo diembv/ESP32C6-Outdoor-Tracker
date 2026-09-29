@@ -233,16 +233,23 @@ Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 
 4. **Tắt log hệ thống ESP32:** Cấu hình `-DCORE_DEBUG_LEVEL=0` trong `platformio.ini` để loại bỏ hoàn toàn các log cảnh báo HAL rác.
 5. **Cân chỉnh tần số quét hiển thị:** Đọc cảm biến ở 5Hz, cập nhật màn hình LVGL ở 4Hz (250ms) giúp số liệu Pitch/Roll phản hồi nhạy và êm mắt.
 6. **Đo dung lượng Pin Li-Po:** Đọc ADC từ GPIO0 (bộ chia áp tích hợp của board Waveshare) tính ra điện áp (V) và % dung lượng.
+7. **Khắc phục vệt trắng bo tròn (White Pill Box) dưới đáy màn hình khi boot:**
+   - **Nguyên nhân:** Thanh cuộn ngang (`LV_PART_SCROLLBAR`) của `lv_tileview` do `LV_THEME_DEFAULT_DARK 0` (mặc định là Light Mode có màu sáng). Với 3 tile, thanh cuộn có chiều rộng bằng 1/3 màn hình (~93px) và nằm chính giữa đáy.
+   - **Xử lý:** 
+     + Chuyển `#define LV_THEME_DEFAULT_DARK 1` trong `include/lv_conf.h` (chế độ Dark theme tối ưu AMOLED).
+     + Tắt triệt để cờ cuộn & scrollbar trên `scr`, `s_tileview` và cả 3 tile (`LV_SCROLLBAR_MODE_OFF`).
+     + Đặt độ mờ của `LV_PART_SCROLLBAR` thành trong suốt hoàn toàn (`LV_OPA_TRANSP`).
+     + Khóa Mutex `example_lvgl_lock(-1)` khi chạy `sd_logger_init()` tránh xung đột bus `SPI2_HOST` lúc boot.
 
 ---
 
-## [ ] Milestone 5 — Power & Storage (Đang Triển Khai)
+## [x] Milestone 5 — Power & Storage (Đã Hoàn Thành Cốt Lõi) ✅
 
 - [x] Đọc ADC pin Li-Po (GPIO0), hiển thị điện áp (V) và % trên màn hình System & Header
-- [ ] Khởi tạo Micro SD qua `esp_vfs_fat_sdspi_mount` (SPI2_HOST, CS=GPIO15)
-- [ ] Ghi dữ liệu hành trình GPS, áp suất, độ nghiêng định kỳ ra file `.csv` trên thẻ nhớ
-- [ ] Hiển thị dung lượng thẻ nhớ và trạng thái ghi log thực tế lên giao diện System
-- [ ] Cơ chế an toàn ngắt thẻ nhớ (flush buffer) tránh hỏng dữ liệu khi tắt nguồn
+- [x] Khởi tạo Micro SD qua `esp_vfs_fat_sdspi_mount` (SPI2_HOST, CS=GPIO15)
+- [x] Ghi dữ liệu hành trình GPS, áp suất, độ nghiêng định kỳ ra file `.csv` (`tracker_log.csv`) trên thẻ nhớ
+- [x] Hiển thị dung lượng thẻ nhớ và trạng thái ghi log thực tế lên giao diện System
+- [x] Cơ chế an toàn ngắt thẻ nhớ (flush buffer) tránh hỏng dữ liệu khi tắt nguồn
 
 ---
 

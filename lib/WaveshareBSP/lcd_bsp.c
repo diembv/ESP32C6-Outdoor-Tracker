@@ -118,6 +118,9 @@ void lcd_lvgl_Init(void)
   ESP_ERROR_CHECK(esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer));
   ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer, EXAMPLE_LVGL_TICK_PERIOD_MS * 1000));
 
+  lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_COVER, 0);
+
   lvgl_mux = xSemaphoreCreateMutex(); //mutex semaphores
   assert(lvgl_mux);
   xTaskCreate(example_lvgl_port_task, "LVGL", EXAMPLE_LVGL_TASK_STACK_SIZE, NULL, EXAMPLE_LVGL_TASK_PRIORITY, NULL);

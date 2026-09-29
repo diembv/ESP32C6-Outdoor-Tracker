@@ -85,6 +85,36 @@ static lv_obj_t *make_dot(lv_obj_t *parent, lv_color_t color, lv_coord_t x, lv_c
     return dot;
 }
 
+static void no_scrollbar_draw_cb(lv_event_t *e)
+{
+    lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
+    if (dsc && (dsc->type == LV_OBJ_DRAW_PART_SCROLLBAR || dsc->part == LV_PART_SCROLLBAR)) {
+        if (dsc->rect_dsc) {
+            dsc->rect_dsc->bg_opa = LV_OPA_TRANSP;
+            dsc->rect_dsc->border_opa = LV_OPA_TRANSP;
+            dsc->rect_dsc->shadow_opa = LV_OPA_TRANSP;
+            dsc->rect_dsc->outline_opa = LV_OPA_TRANSP;
+        }
+        if (dsc->draw_area) {
+            dsc->draw_area->x2 = dsc->draw_area->x1 - 1;
+            dsc->draw_area->y2 = dsc->draw_area->y1 - 1;
+        }
+    }
+}
+
+static void strip_scrollbar(lv_obj_t *obj)
+{
+    if (!obj) return;
+    lv_obj_remove_style(obj, NULL, (lv_style_selector_t)LV_PART_SCROLLBAR | (lv_style_selector_t)LV_STATE_ANY);
+    lv_obj_set_scrollbar_mode(obj, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_width(obj, 0, (lv_style_selector_t)LV_PART_SCROLLBAR | (lv_style_selector_t)LV_STATE_ANY);
+    lv_obj_set_style_pad_all(obj, 0, (lv_style_selector_t)LV_PART_SCROLLBAR | (lv_style_selector_t)LV_STATE_ANY);
+    lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, (lv_style_selector_t)LV_PART_SCROLLBAR | (lv_style_selector_t)LV_STATE_ANY);
+    lv_obj_set_style_border_opa(obj, LV_OPA_TRANSP, (lv_style_selector_t)LV_PART_SCROLLBAR | (lv_style_selector_t)LV_STATE_ANY);
+    lv_obj_set_style_shadow_opa(obj, LV_OPA_TRANSP, (lv_style_selector_t)LV_PART_SCROLLBAR | (lv_style_selector_t)LV_STATE_ANY);
+    lv_obj_add_event_cb(obj, no_scrollbar_draw_cb, LV_EVENT_DRAW_PART_BEGIN, NULL);
+}
+
 static void style_tile(lv_obj_t *tile)
 {
     lv_obj_set_style_bg_color(tile, CLR_BG, 0);
@@ -92,6 +122,7 @@ static void style_tile(lv_obj_t *tile)
     lv_obj_set_style_pad_all(tile, 0, 0);
     lv_obj_set_style_border_width(tile, 0, 0);
     lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
+    strip_scrollbar(tile);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -245,6 +276,8 @@ void ui_dashboard_init(void)
     lv_obj_t *scr = lv_scr_act();
     lv_obj_set_style_bg_color(scr, CLR_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    strip_scrollbar(scr);
 
     // Gán gesture cho toàn màn hình
     lv_obj_add_event_cb(scr, swipe_gesture_cb, LV_EVENT_GESTURE, NULL);
@@ -255,9 +288,7 @@ void ui_dashboard_init(void)
     lv_obj_set_style_bg_color(s_tileview, CLR_BG, 0);
     lv_obj_set_style_bg_opa(s_tileview, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(s_tileview, 0, 0);
-    
-    // TẮT SCROLLBARS (không còn 3 chấm)
-    lv_obj_set_scrollbar_mode(s_tileview, LV_SCROLLBAR_MODE_OFF);
+    strip_scrollbar(s_tileview);
 
     // ── 3 Tiles ngang: Navigation (0) - Sensors (1) - System (2)
     s_tile[0] = lv_tileview_add_tile(s_tileview, 0, 0, LV_DIR_RIGHT);
@@ -268,8 +299,15 @@ void ui_dashboard_init(void)
     build_tile1_sensors(s_tile[1]);
     build_tile2_system(s_tile[2]);
 
+    for (int i = 0; i < 3; i++) {
+        if (s_tile[i]) {
+            strip_scrollbar(s_tile[i]);
+        }
+    }
+
     // Đặt mặc định mở trang ở giữa (Sensors - Tile 1)
     lv_obj_set_tile(s_tileview, s_tile[1], LV_ANIM_OFF);
+    strip_scrollbar(s_tileview);
 }
 
 void ui_dashboard_update(const SensorSnapshot *snap)
@@ -388,7 +426,12 @@ void ui_dashboard_update(const SensorSnapshot *snap)
         lv_label_set_text(t0_lbl_sd, buf);
         lv_obj_set_style_text_color(t0_lbl_sd, CLR_GREEN, 0);
     } else {
-        lv_label_set_text(t0_lbl_sd, "No SD card");
-        lv_obj_set_style_text_color(t0_lbl_sd, CLR_DIMTEXT, 0);
+        if (snap->sys.sd_free_mb > 0) {
+            snprintf(buf, sizeof(buf), "Error 0x%X", (unsigned int)snap->sys.sd_free_mb);
+            lv_label_set_text(t0_lbl_sd, buf);
+        } else {
+            lv_label_set_text(t0_lbl_sd, "No SD card");
+        }
+        lv_obj_set_style_text_color(t0_lbl_sd, CLR_RED, 0);
     }
 }

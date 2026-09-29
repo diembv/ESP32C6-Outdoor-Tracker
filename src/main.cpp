@@ -245,13 +245,7 @@ static void readSensors() {
         g_snap.imu.valid = false;
     }
 
-    // ── System ────────────────────────────────────────────────────────────────
     g_snap.sys.uptime_s    = (now - tBoot) / 1000;
-    g_snap.sys.battery_v   = 0.0f;
-    g_snap.sys.battery_pct = 0;
-    g_snap.sys.sd_present  = false;
-    g_snap.sys.sd_ok       = false;
-    g_snap.sys.sd_free_mb  = 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -319,9 +313,13 @@ static void printSerial() {
     Serial.printf("  [SYS] Uptime: %02lu:%02lu:%02lu\n",
         (unsigned long)h, (unsigned long)m, (unsigned long)s);
     if (g_snap.sys.sd_ok) {
-        Serial.printf("  [SYS] SD Card: OK (%lu MB) — logging /sdcard/tracker_log.csv\n", (unsigned long)g_snap.sys.sd_free_mb);
+        Serial.printf("  [SYS] SD Card: OK (%lu MB) - logging\n", (unsigned long)g_snap.sys.sd_free_mb);
     } else {
-        Serial.println(F("  [SYS] SD Card: Chưa cắm thẻ / Chưa mount"));
+        if (g_snap.sys.sd_free_mb > 0) {
+            Serial.printf("  [SYS] SD Card: ERROR 0x%X\n", (unsigned int)g_snap.sys.sd_free_mb);
+        } else {
+            Serial.println("  [SYS] SD Card: No SD Card");
+        }
     }
     Serial.println(F("==================================================\n"));
 }
@@ -340,6 +338,11 @@ void setup() {
     Serial.println(F("╚══════════════════════════════════════════════════╝\n"));
     Serial.flush();
 
+    // Vô hiệu hóa thẻ SD ngay từ đầu bằng cách kéo chân CS lên HIGH
+    // Đảm bảo thẻ SD không làm nhiễu bus SPI (đặc biệt là tín hiệu MISO) khi AMOLED khởi tạo
+    pinMode(15, OUTPUT);
+    digitalWrite(15, HIGH);
+    
     // ── I2C ──────────────────────────────────────────────────────────────────
     Serial.printf("[I2C] Init: SDA=GPIO%d  SCL=GPIO%d  100kHz\n",
                   I2C_SDA_PIN, I2C_SCL_PIN);
@@ -378,7 +381,10 @@ void setup() {
     Serial.flush();
 
     // ── MicroSD Logger (SPI2, CS=GPIO15) ──────────────────────────────────────
-    sd_logger_init(&g_snap);
+    if (example_lvgl_lock(-1)) {
+        sd_logger_init(&g_snap);
+        example_lvgl_unlock();
+    }
     Serial.flush();
 
     tLastSensor = millis();
@@ -455,7 +461,10 @@ void loop() {
     static uint32_t tLastSdLog = 0;
     if (now - tLastSdLog >= 1000) {
         tLastSdLog = now;
-        sd_logger_log(&g_snap);
+        if (example_lvgl_lock(-1)) {
+            sd_logger_log(&g_snap);
+            example_lvgl_unlock();
+        }
     }
 
     // ── 7. Yield cho LVGL FreeRTOS task ──────────────────────────────────────

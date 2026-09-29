@@ -35,18 +35,30 @@ bool sd_logger_init(SensorSnapshot *snap) {
         .disk_status_check_enable = false
     };
 
+    // Kéo pull-up cho các chân SPI để tránh nhiễu/lỗi nhận thẻ khi dùng chung bus QSPI
+    gpio_set_pull_mode((gpio_num_t)4, GPIO_PULLUP_ONLY); // MOSI / D0
+    gpio_set_pull_mode((gpio_num_t)5, GPIO_PULLUP_ONLY); // MISO / D1
+    gpio_set_pull_mode((gpio_num_t)11, GPIO_PULLUP_ONLY); // CLK
+
     // Cấu hình slot SD SPI (dùng chung bus SPI2 đã khởi tạo bởi màn hình AMOLED)
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
     slot_config.gpio_cs   = SD_CS_PIN;
     slot_config.host_id   = SD_SPI_HOST;
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    // Quan trọng: Bus SPI2 đã được màn hình AMOLED khởi tạo, KHÔNG cho phép thẻ SD init lại bus!
+    host.flags &= ~SDMMC_HOST_FLAG_DEINIT_ARG; // Giữ các cờ khác, chỉ xoá DEINIT_ARG
     host.slot = SD_SPI_HOST;
-    host.max_freq_khz = SDMMC_FREQ_DEFAULT; // 20MHz an toàn cho chia sẻ bus SPI
+    host.max_freq_khz = 4000; // Hạ xuống 4MHz để an toàn khi dùng chung bus QSPI tốc độ cao
 
     esp_err_t ret = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &slot_config, &mount_config, &s_card);
     if (ret != ESP_OK) {
         Serial.printf("[SD] Mount thất bại (mã lỗi: 0x%x). Có thể chưa cắm thẻ nhớ.\n", ret);
+        if (snap) {
+            snap->sys.sd_ok = false;
+            snap->sys.sd_present = false;
+            snap->sys.sd_free_mb = (uint32_t)ret; // Lưu mã lỗi để UI hiển thị nếu cần
+        }
         return false;
     }
 
