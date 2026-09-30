@@ -1,6 +1,6 @@
 /**
  * @file    main.cpp
- * @brief   ESP32-C6 Outdoor Tracker — Milestone 4: LVGL 3-page Dashboard
+ * @brief   ESP32-C6 Outdoor Tracker — Milestone 5: Power & Storage
  *
  * Board  : Waveshare ESP32-C6-Touch-AMOLED-1.64
  * Screen : SH8601 AMOLED 280 × 456 px (QSPI)
@@ -22,6 +22,10 @@
 #include "lcd_bsp.h"
 #include "ui_dashboard.h"
 #include "sd_logger.h"
+#include "esp_sleep.h"
+#include "driver/uart.h"
+
+#define BTN_PWR_PIN 9
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Pin Config
@@ -351,12 +355,23 @@ static void printSerial() {
 // ═══════════════════════════════════════════════════════════════════════════════
 void setup() {
     Serial.begin(115200);
+    Serial.setTxTimeoutMs(0); // FIX: Tranh treo khi rut cap USB CDC!
     delay(2000);
     tBoot = millis();
+    
+    // --- Power Button ---
+    pinMode(BTN_PWR_PIN, INPUT_PULLUP);
+    
+    // Da xoa gpio_wakeup_enable khoi setup de digitalRead hoat dong!
+    
+    // Kiem tra ly do thuc day
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_GPIO) {
+        Serial.println("[PWR] Woke up from Deep Sleep by BOOT button!");
+    }
 
     Serial.println(F("\n╔══════════════════════════════════════════════════╗"));
-    Serial.println(F("║  ESP32-C6 Outdoor Tracker — Milestone 4         ║"));
-    Serial.println(F("║  LVGL Dashboard + QMI8658 Direct Wire           ║"));
+    Serial.println(F("║  ESP32-C6 Outdoor Tracker — Milestone 5         ║"));
+    Serial.println(F("║  Power & Storage (SD Logger Optimized)          ║"));
     Serial.println(F("╚══════════════════════════════════════════════════╝\n"));
     Serial.flush();
 
@@ -419,6 +434,111 @@ void setup() {
 // ═══════════════════════════════════════════════════════════════════════════════
 void loop() {
     const uint32_t now = millis();
+    static uint32_t lpt=0;
+    if(now-lpt>1000){ lpt=now; Serial.println("[DEBUG] Loop is running!"); }
+
+    // Khai báo tĩnh các biến quản lý trạng thái ngủ
+    static uint32_t lastActivityTime = 0;
+    static bool     isScreenOn       = true;
+    static float    lastPitch = 0.0f, lastRoll = 0.0f;
+    static const uint32_t SCREEN_TIMEOUT_MS = 20000; // 20s tắt màn hình
+
+    // ── 1. Đánh thức khi chạm màn hình ──────────────────────────────────────
+    if (example_lvgl_lock(-1)) {
+        if (lv_disp_get_inactive_time(NULL) < 100) {
+            lastActivityTime = now;
+        }
+        example_lvgl_unlock();
+    }
+
+    // ── 2. Đánh thức khi có rung lắc (Wake-on-motion) ───────────────────────
+    if (g_snap.imu.valid) {
+        if (abs(g_snap.imu.pitch_deg - lastPitch) > 15.0f || 
+            abs(g_snap.imu.roll_deg - lastRoll) > 15.0f) {
+            lastActivityTime = now; 
+        }
+        lastPitch = g_snap.imu.pitch_deg;
+        lastRoll  = g_snap.imu.roll_deg;
+    }
+    
+    // ── 2.5 Danh thuc khi nhan nut BOOT (GPIO9) ──
+    // Kiem tra phat hien canh (Edge Detection) de tranh nhay lien tuc
+    static bool last_btn_state = digitalRead(BTN_PWR_PIN); // Khoi tao bang trang thai thuc te de tranh trigger luc boot
+    bool current_btn_state = digitalRead(BTN_PWR_PIN);
+    
+    if (current_btn_state == LOW && last_btn_state == HIGH) {
+        Serial.println("[DEBUG] Nhan dien duoc nut BOOT duoc bam (Canh xuong)!");
+        // Vua moi bam xuong
+        if (isScreenOn) {
+            Serial.println("[DEBUG] Ep tat man hinh luon!");
+            // Tat man hinh luon
+            lastActivityTime = now - SCREEN_TIMEOUT_MS - 1000; 
+        } else {
+            Serial.println("[DEBUG] Ep bat man hinh len!");
+            // Bat man hinh
+            lastActivityTime = now;
+        }
+    }
+    last_btn_state = current_btn_state;
+
+    // ── 3. State Machine: Sleep / Wake ──────────────────────────────────────
+    if (isScreenOn && (now - lastActivityTime > SCREEN_TIMEOUT_MS)) {
+        isScreenOn = false;
+        Serial.println("[PWR] Tắt màn hình, giảm xung CPU xuống 80MHz tiết kiệm pin.");
+        
+        set_amoled_backlight(0);
+        
+        if (!g_snap.sys.is_logging_active) {
+            Serial.println("[PWR] Khong ghi log -> LIGHT SLEEP (Tiet kiem pin, an BOOT de thuc day)!");
+        } else {
+            Serial.println("[PWR] Dang ghi log -> LIGHT SLEEP (Duy tri doc GPS)!");
+        }
+        
+    } 
+    else if (!isScreenOn && (now - lastActivityTime <= SCREEN_TIMEOUT_MS)) {
+        isScreenOn = true;
+        Serial.println("[PWR] Đánh thức! Bật lại màn hình, nâng CPU 160MHz.");
+        
+        // setCpuFrequencyMhz(160); da bi loai bo
+        set_amoled_backlight(255); // Bat lai AMOLED
+        
+        if (example_lvgl_lock(-1)) {
+            lv_disp_trig_activity(NULL);
+            example_lvgl_unlock();
+        }
+    }
+
+    // ── 4. Tiết kiệm tối đa khi đang ngủ ────────────────────────────────────
+    if (!isScreenOn) {
+        // Khi man hinh tat va is_logging_active == true
+        while (gpsSerial.available()) gpsParser.encode((char)gpsSerial.read());
+        
+        static uint32_t tLastSdLog = 0;
+        if (now - tLastSdLog >= 1000) {
+            tLastSdLog = now;
+            sd_logger_log(&g_snap);
+        }
+        
+        // LIGHT SLEEP CHUAN ESP-IDF:
+        // Cho phep danh thuc bang UART (khi co the NMEA bay vao)
+        uart_set_wakeup_threshold(UART_NUM_1, 3);
+        esp_sleep_enable_uart_wakeup(UART_NUM_1);
+        
+        // Cau hinh danh thuc bang nut bam ngay truoc khi ngu
+        gpio_wakeup_enable((gpio_num_t)BTN_PWR_PIN, GPIO_INTR_LOW_LEVEL);
+        esp_sleep_enable_gpio_wakeup();
+
+        // Ngu nong khoang 100ms de tiet kiem pin, hoac bi thuc day boi UART som hon
+        esp_sleep_enable_timer_wakeup(100000); 
+        esp_light_sleep_start();
+        
+        // Vua tinh day, tat chuc nang wakeup tren chan nay de digitalRead hoat dong binh thuong
+        gpio_wakeup_disable((gpio_num_t)BTN_PWR_PIN);
+        // BAT BUOC phai goi lai pinMode vi gpio_wakeup_enable da route chan nay sang RTC, lam digitalRead bi mu!
+        pinMode(BTN_PWR_PIN, INPUT_PULLUP);
+        
+        return; // Thoat som, khong update UI
+    }
 
     // ── Đọc ADC Pin (Mỗi 2 giây) ─────────────────────────────────────────────
     static uint32_t lastBat = 0;

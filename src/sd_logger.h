@@ -22,6 +22,9 @@ void sd_logger_flush(void);
 // Toggle logging state and file creation
 void sd_logger_toggle(SensorSnapshot *snap);
 
+// Lấy thông tin thống kê ghi log (số điểm đã ghi, dung lượng RAM buffer)
+void sd_logger_get_stats(uint32_t *points_logged, size_t *buffer_usage);
+
 #ifdef __cplusplus
 }
 #endif

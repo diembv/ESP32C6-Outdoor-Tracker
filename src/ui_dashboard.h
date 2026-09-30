@@ -88,7 +88,7 @@ struct SysData {
     bool     sd_present;    // SD có mặt
     bool     sd_ok;         // SD OK
     uint32_t sd_free_mb;    // SD free MB
-    bool     is_logging;    // Trạng thái đang ghi log
+    bool     is_logging_active; // Trạng thái đang ghi log
 };
 
 struct SensorSnapshot {

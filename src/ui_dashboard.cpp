@@ -217,10 +217,44 @@ static void build_tile1_sensors(lv_obj_t *tile)
 extern SensorSnapshot g_snap;
 #include "sd_logger.h"
 
+static uint32_t logStartTime = 0;
+
 static void btn_log_event_cb(lv_event_t * e) {
     lv_event_code_t code = lv_event_get_code(e);
     if(code == LV_EVENT_CLICKED) {
-        sd_logger_toggle(&g_snap);
+        if (g_snap.sys.is_logging_active) {
+            // 1. Đang ghi -> DỪNG GHI
+            sd_logger_toggle(&g_snap);
+            
+            // 2. Tính toán thời gian
+            uint32_t duration_s = (millis() - logStartTime) / 1000;
+            uint32_t m = duration_s / 60;
+            uint32_t s = duration_s % 60;
+
+            // 3. Hiển thị bảng Popup (Message Box) LVGL
+            static const char * btns[] = {"OK", ""};
+            char summary_text[200];
+            snprintf(summary_text, sizeof(summary_text), 
+                     "Da luu an toan vao MicroSD!\n\n"
+                     "Thoi gian ghi: %02lu:%02lu\n"
+                     "Khoang cach: (Demo)\n"
+                     "Toc do TB: (Demo)", 
+                     (unsigned long)m, (unsigned long)s);
+                     
+            lv_obj_t * mbox = lv_msgbox_create(NULL, "TONG KET", summary_text, btns, true);
+            lv_obj_center(mbox);
+        } else {
+            // 1. Chưa ghi -> BẮT ĐẦU GHI
+            if (g_snap.gps.fix_valid) {
+                logStartTime = millis(); // Ghi nhớ mốc bắt đầu
+                sd_logger_toggle(&g_snap);
+            } else {
+                // Cảnh báo nếu chưa có GPS
+                static const char * btns[] = {"Dong", ""};
+                lv_obj_t * mbox = lv_msgbox_create(NULL, "CANH BAO", "Dang tim ve tinh...\nVui long cho GPS fix!", btns, true);
+                lv_obj_center(mbox);
+            }
+        }
     }
 }
 
@@ -481,9 +515,23 @@ void ui_dashboard_update(const SensorSnapshot *snap)
     lv_label_set_text(t0_lbl_battery, buf);
 
     if (snap->sys.sd_present && snap->sys.sd_ok) {
-        snprintf(buf, sizeof(buf), "OK (%lu MB free)", (unsigned long)snap->sys.sd_free_mb);
-        lv_label_set_text(t0_lbl_sd, buf);
-        lv_obj_set_style_text_color(t0_lbl_sd, CLR_GREEN, 0);
+        if (snap->sys.is_logging_active) {
+            uint32_t pts = 0;
+            size_t buf_usage = 0;
+            sd_logger_get_stats(&pts, &buf_usage);
+            snprintf(buf, sizeof(buf), "REC: %lu pts | RAM: %u/1024B", (unsigned long)pts, (unsigned int)buf_usage);
+            lv_label_set_text(t0_lbl_sd, buf);
+            // Blink text color
+            if ((millis() / 500) % 2 == 0) {
+                lv_obj_set_style_text_color(t0_lbl_sd, CLR_YELLOW, 0);
+            } else {
+                lv_obj_set_style_text_color(t0_lbl_sd, CLR_GREEN, 0);
+            }
+        } else {
+            snprintf(buf, sizeof(buf), "OK (%lu MB free)", (unsigned long)snap->sys.sd_free_mb);
+            lv_label_set_text(t0_lbl_sd, buf);
+            lv_obj_set_style_text_color(t0_lbl_sd, CLR_GREEN, 0);
+        }
     } else {
         if (snap->sys.sd_free_mb > 0) {
             snprintf(buf, sizeof(buf), "Error 0x%X", (unsigned int)snap->sys.sd_free_mb);
@@ -494,10 +542,16 @@ void ui_dashboard_update(const SensorSnapshot *snap)
         lv_obj_set_style_text_color(t0_lbl_sd, CLR_RED, 0);
     }
 
-    // Cập nhật trạng thái nút ghi log
-    if (snap->sys.is_logging) {
-        lv_label_set_text(t0_lbl_btn_log, "STOP LOGGING");
-        lv_obj_set_style_bg_color(t0_btn_log, CLR_RED, 0);
+    // Cập nhật trạng thái nút ghi log (Có hiệu ứng nhấp nháy REC)
+    if (snap->sys.is_logging_active) {
+        lv_label_set_text(t0_lbl_btn_log, "STOP (REC)");
+        
+        // Hiệu ứng nhấp nháy Đỏ Sáng / Đỏ Đậm mỗi 500ms
+        if ((millis() / 500) % 2 == 0) {
+            lv_obj_set_style_bg_color(t0_btn_log, CLR_RED, 0); 
+        } else {
+            lv_obj_set_style_bg_color(t0_btn_log, lv_color_hex(0x8B0000), 0); // Dark Red
+        }
     } else {
         lv_label_set_text(t0_lbl_btn_log, "START LOGGING");
         lv_obj_set_style_bg_color(t0_btn_log, CLR_BORDER, 0);

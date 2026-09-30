@@ -539,7 +539,7 @@
 
 #define LV_USE_METER      0   /* không dùng */
 
-#define LV_USE_MSGBOX     0   /* không dùng */
+#define LV_USE_MSGBOX     1   /* enabled */
 
 #define LV_USE_SPAN       0   /* không dùng */
 

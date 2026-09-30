@@ -243,19 +243,36 @@ Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 
 
 ---
 
-## [x] Milestone 5 — Power & Storage (Đã Hoàn Thành Cốt Lõi) ✅
+## [x] Milestone 5 — Power & Data Logging (Đã hoàn thành cơ bản, chuyển sang pha tối ưu)
+- [x] Đọc ADC pin Li-Po (GPIO0), hiển thị điện áp (V) và % trên màn hình System & Header.
+- [x] Khởi tạo MicroSD qua `esp_vfs_fat_sdspi_mount` (SPI2_HOST, CS=GPIO15).
+- [x] **Tối ưu hóa Logging (Đã hoàn thành):**
+  - [x] Thêm nút bấm Start/Stop Logging trên giao diện để tránh ghi rác thẻ nhớ.
+  - [x] Triển khai bộ đệm (1KB) trong RAM: Gom cụm dữ liệu trước khi ghi khối xuống thẻ SD để giảm hao mòn flash và tiết kiệm pin.
+  - [x] Đặt tên file log tự động theo GPS UTC Timestamp (`YYYYMMDD_HHMMSS.csv`).
 
-- [x] Đọc ADC pin Li-Po (GPIO0), hiển thị điện áp (V) và % trên màn hình System & Header
-- [x] Khởi tạo Micro SD qua `esp_vfs_fat_sdspi_mount` (SPI2_HOST, CS=GPIO15)
-- [x] Tạo thư mục `/tracker_log/` và ghi định dạng chuẩn GPX (`.gpx`), đặt tên file theo giờ GPS chuẩn quốc tế (VD: `track_20261025_153022.gpx`).
-- [x] **Trạng thái ghi chủ động**: Bổ sung Nút bấm `START LOGGING` / `STOP LOGGING` trên màn hình System. Chỉ ghi log tọa độ (Trackpoints) khi có GPS Fix hợp lệ.
-- [x] **Ghi nhận Cao độ**: Tích hợp cao độ siêu nhạy từ cảm biến khí áp BMP580 làm thẻ `<ele>` trong file GPX để kết xuất lộ trình 3D chuyên nghiệp.
-- [x] **Xử lý Thời gian thực (GPS)**:
-  + Màn hình UI: Hiển thị tự động giờ Việt Nam (UTC+7).
-  + File GPX (XML): Lưu thời gian gốc UTC chuẩn theo quy định để app nhận diện chính xác.
-- [x] **Tốc độ đọc phân tách**: IMU đọc với tần số 5Hz (Pitch/Roll phản hồi mượt), GPS và Baro đọc với tần số 1Hz để tối ưu ghi file và tiết kiệm.
-- [x] Hiển thị dung lượng thẻ nhớ và bẫy lỗi an toàn: Bắt gọn lỗi mất thẻ / hỏng kết nối (Error 0x107) mà không gây Crash hệ thống. Đã fix hoàn toàn lỗi xung đột chân phần cứng (GPIO 4, 5, 11) giữa thẻ SD và màn hình QSPI.
-- [x] Cơ chế an toàn ngắt thẻ nhớ (flush buffer, đóng tags XML GPX) tránh hỏng file dữ liệu khi Stop Logging.
+---
+
+## [ ] Milestone 6 — Navigation với Cửa sổ trượt (Sliding Window GPX) & Breadcrumb Map
+- [ ] **Định dạng dữ liệu tuyến đường (Route Binary):**
+  - Chuyển đổi file GPX thành dạng bản ghi nhị phân cố định (Fixed-size Record: 8 bytes/điểm - float lat, float lon).
+- [ ] **Thuật toán Cửa sổ trượt (Sliding Window):**
+  - Cấp phát cố định mảng đệm 100 điểm (~800 bytes RAM) cho các điểm lân cận vị trí hiện tại.
+  - Sử dụng `fseek()` đọc nạp cuộn tuần tự từ thẻ nhớ khi người dùng di chuyển, không nạp toàn bộ file vào SRAM.
+- [ ] **Giao diện Breadcrumb Navigation (AMOLED Dark Mode):**
+  - Tọa độ người dùng làm tâm `(140, 120)` với biểu tượng mũi tên định hướng (kết hợp Gyro + GPS Course).
+  - Vẽ vệt lộ trình dự kiến (màu Neon Cyan) và vết đường đã đi (màu xám nhạt).
+  - Tính toán và cảnh báo lệch lộ trình (Cross-Track Error) cùng cự ly đến waypoint kế tiếp.
+  - Hỗ trợ thao tác Zoom thang đo ($100\text{m} \leftrightarrow 500\text{m} \leftrightarrow 2\text{km}$).
+
+---
+
+## [ ] Milestone 7 — Web App Kết nối & Truyền dữ liệu (BLE / Wi-Fi)
+- [ ] **Web BLE Dashboard (PWA):**
+  - Kết nối qua Bluetooth Web API từ trình duyệt điện thoại để xem dữ liệu thời gian thực.
+  - Tải file nhị phân lộ trình từ điện thoại bắn sang thẻ nhớ ESP32-C6.
+- [ ] **Wi-Fi Hotspot Mode (Trích xuất dữ liệu nhanh):**
+  - Kích hoạt Web Server tạm thời để tải toàn bộ file CSV từ thẻ MicroSD về điện thoại.
 
 ---
 
@@ -265,6 +282,13 @@ Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 
 |---|---|
 | 🗺️ Bản đồ offline | Đọc tiles OpenStreetMap từ Micro SD |
 | 📍 Waypoints | Lưu và điều hướng đến điểm đã đánh dấu |
-| 📊 Track recording | Ghi route GPS, export file GPX ra SD |
+| 📊 Track recording | Ghi route GPS, export file GPX/CSV ra SD |
 | 📶 BLE streaming | Stream dữ liệu GPS đến điện thoại |
 | 🌐 OTA update | Cập nhật firmware qua WiFi ngoài trời |
+
+## [x] Updates (2026-09-30)
+- **SD Card & SPI Fix**: Restored ~SDMMC_HOST_FLAG_DEINIT_ARG flag to prevent SPI de-initialization when mounting SD card, fixing I2C lockups and mount failures.
+- **Smart GPX Logging**: Implemented 3-state GPS sampling logic (10s standby, 3s steady, 1s maneuver) in sd_logger.cpp.
+- **Power Management (Light Sleep)**: Switched from DFS CPU scaling to esp_light_sleep_start(), preventing UART baudrate corruption. Screen successfully auto-timeouts after 20s.
+- **UI Freeze Fixes**: Resolved USB CDC blocking by setting Serial.setTxTimeoutMs(0). Resolved LVGL threading Guru Meditation Error by wrapping all cross-task LVGL calls (lv_disp_trig_activity, lv_disp_get_inactive_time) in example_lvgl_lock(-1).
+- **BOOT Button Status**: Edge detection logic and pinMode restoring implemented, but the physical button read is still failing to trigger the manual wake/sleep. Needs investigation in the next session.
