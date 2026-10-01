@@ -165,7 +165,7 @@ static void build_tile0_navigation(lv_obj_t *tile)
     make_hline(tile, 130);
 
     t2_lbl_note = lv_label_create(tile);
-    lv_label_set_text(t2_lbl_note, "GPS Course khi speed > 0.5 km/h");
+    lv_label_set_text(t2_lbl_note, "Course over ground (v > 0.5 km/h)");
     lv_obj_set_style_text_font(t2_lbl_note, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(t2_lbl_note, CLR_DIMTEXT, 0);
     lv_obj_set_pos(t2_lbl_note, 8, 140);
@@ -219,39 +219,45 @@ extern SensorSnapshot g_snap;
 
 static uint32_t logStartTime = 0;
 
+static void mbox_close_cb(lv_event_t * e) {
+    lv_msgbox_close(lv_event_get_current_target(e));
+}
+
 static void btn_log_event_cb(lv_event_t * e) {
     lv_event_code_t code = lv_event_get_code(e);
     if(code == LV_EVENT_CLICKED) {
         if (g_snap.sys.is_logging_active) {
-            // 1. Đang ghi -> DỪNG GHI
             sd_logger_toggle(&g_snap);
             
-            // 2. Tính toán thời gian
-            uint32_t duration_s = (millis() - logStartTime) / 1000;
-            uint32_t m = duration_s / 60;
-            uint32_t s = duration_s % 60;
-
-            // 3. Hiển thị bảng Popup (Message Box) LVGL
+            float dist_m = 0;
+            uint32_t dur_s = 0;
+            sd_logger_get_summary(&dist_m, &dur_s);
+            
+            uint32_t m = dur_s / 60;
+            uint32_t s = dur_s % 60;
+            float dist_km = dist_m / 1000.0f;
+            float avg_speed = dur_s > 0 ? (dist_km / (dur_s / 3600.0f)) : 0;
+            
             static const char * btns[] = {"OK", ""};
             char summary_text[200];
             snprintf(summary_text, sizeof(summary_text), 
-                     "Da luu an toan vao MicroSD!\n\n"
-                     "Thoi gian ghi: %02lu:%02lu\n"
-                     "Khoang cach: (Demo)\n"
-                     "Toc do TB: (Demo)", 
-                     (unsigned long)m, (unsigned long)s);
+                     "Session saved to MicroSD.\n\n"
+                     "Elapsed Time: %02lu:%02lu\n"
+                     "Distance: %.2f km\n"
+                     "Avg Speed: %.1f km/h", 
+                     (unsigned long)m, (unsigned long)s, dist_km, avg_speed);
                      
-            lv_obj_t * mbox = lv_msgbox_create(NULL, "TONG KET", summary_text, btns, true);
+            lv_obj_t * mbox = lv_msgbox_create(NULL, "ACTIVITY SUMMARY", summary_text, btns, false);
+            lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
             lv_obj_center(mbox);
         } else {
-            // 1. Chưa ghi -> BẮT ĐẦU GHI
-            if (g_snap.gps.fix_valid) {
-                logStartTime = millis(); // Ghi nhớ mốc bắt đầu
-                sd_logger_toggle(&g_snap);
-            } else {
-                // Cảnh báo nếu chưa có GPS
-                static const char * btns[] = {"Dong", ""};
-                lv_obj_t * mbox = lv_msgbox_create(NULL, "CANH BAO", "Dang tim ve tinh...\nVui long cho GPS fix!", btns, true);
+            logStartTime = millis();
+            sd_logger_toggle(&g_snap);
+            
+            if (!g_snap.gps.fix_valid) {
+                static const char * btns[] = {"OK", ""};
+                lv_obj_t * mbox = lv_msgbox_create(NULL, "WAITING FOR GPS", "Log file created.\nSystem will auto-record trackpoints once GPS fix is acquired.", btns, false);
+                lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
                 lv_obj_center(mbox);
             }
         }

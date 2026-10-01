@@ -25,6 +25,8 @@ void sd_logger_toggle(SensorSnapshot *snap);
 // Lấy thông tin thống kê ghi log (số điểm đã ghi, dung lượng RAM buffer)
 void sd_logger_get_stats(uint32_t *points_logged, size_t *buffer_usage);
 
+void sd_logger_get_summary(float *distance_m, uint32_t *duration_s);
+
 #ifdef __cplusplus
 }
 #endif

@@ -461,25 +461,32 @@ void loop() {
         lastRoll  = g_snap.imu.roll_deg;
     }
     
-    // ── 2.5 Danh thuc khi nhan nut BOOT (GPIO9) ──
-    // Kiem tra phat hien canh (Edge Detection) de tranh nhay lien tuc
-    static bool last_btn_state = digitalRead(BTN_PWR_PIN); // Khoi tao bang trang thai thuc te de tranh trigger luc boot
-    bool current_btn_state = digitalRead(BTN_PWR_PIN);
+    // ── 2.5 Danh thuc khi nhan nut BOOT (GPIO9) (CO DEBOUNCE CHONG NHIEU) ──
+    static bool last_reading = digitalRead(BTN_PWR_PIN);
+    static bool stable_btn_state = last_reading;
+    static uint32_t last_debounce_time = 0;
     
-    if (current_btn_state == LOW && last_btn_state == HIGH) {
-        Serial.println("[DEBUG] Nhan dien duoc nut BOOT duoc bam (Canh xuong)!");
-        // Vua moi bam xuong
-        if (isScreenOn) {
-            Serial.println("[DEBUG] Ep tat man hinh luon!");
-            // Tat man hinh luon
-            lastActivityTime = now - SCREEN_TIMEOUT_MS - 1000; 
-        } else {
-            Serial.println("[DEBUG] Ep bat man hinh len!");
-            // Bat man hinh
-            lastActivityTime = now;
+    bool reading = digitalRead(BTN_PWR_PIN);
+    
+    if (reading != last_reading) {
+        last_debounce_time = now; // Reset timer neu co nhieu
+    }
+    
+    if ((now - last_debounce_time) > 50) { // 50ms on dinh
+        if (reading != stable_btn_state) {
+            stable_btn_state = reading;
+            
+            if (stable_btn_state == LOW) { // Phat hien canh xuong an toan
+                Serial.println("[DEBUG] Nhan dien nut BOOT an toan (co debounce)!");
+                if (isScreenOn) {
+                    lastActivityTime = now - SCREEN_TIMEOUT_MS - 1000; 
+                } else {
+                    lastActivityTime = now;
+                }
+            }
         }
     }
-    last_btn_state = current_btn_state;
+    last_reading = reading;
 
     // ── 3. State Machine: Sleep / Wake ──────────────────────────────────────
     if (isScreenOn && (now - lastActivityTime > SCREEN_TIMEOUT_MS)) {

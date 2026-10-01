@@ -1,4 +1,5 @@
 #include "sd_logger.h"
+#include <TinyGPS++.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -30,6 +31,10 @@ static float s_last_heading = -1;
 static float s_last_alt = 0;
 static uint32_t s_last_sample_time = 0;
 static uint32_t s_low_speed_start = 0;
+static float s_session_distance = 0;
+static double s_last_lat = 0;
+static double s_last_lon = 0;
+static uint32_t s_session_start_ms = 0;
 static uint32_t s_points_logged = 0;
 
 static void flush_buffer_to_sd() {
@@ -165,6 +170,10 @@ void sd_logger_toggle(SensorSnapshot *snap) {
         s_points_logged = 0;
         s_last_flush_time = millis();
         s_last_heading = -1;
+        s_session_distance = 0;
+        s_last_lat = 0;
+        s_last_lon = 0;
+        s_session_start_ms = millis();
         
         Serial.printf("[SD] BAT DAU ghi log GPX vao: %s\n", s_filepath);
         snap->sys.is_logging_active = true;
@@ -177,10 +186,8 @@ void sd_logger_log(SensorSnapshot *snap) {
     uint32_t now = millis();
     
     // Stop logging automatically if battery is critically low (e.g. < 3.45V)
-    if (snap->sys.is_logging_active && snap->sys.battery_v > 0 && snap->sys.battery_v < 3.45f) {
-        Serial.println("[PWR] Pin yeu (< 3.45V), tu dong ngat ghi log GPX!");
-        sd_logger_toggle(snap);
-        return;
+    if (snap->sys.is_logging_active && snap->sys.battery_v > 0.5f && snap->sys.battery_v < 3.45f) {
+        // Disabled for testing without battery
     }
 
     if (!snap->sys.is_logging_active || !snap->gps.fix_valid) {
@@ -195,6 +202,20 @@ void sd_logger_log(SensorSnapshot *snap) {
     float v = snap->gps.speed_kmh;
     float heading = snap->gps.course_deg;
     float alt = snap->baro.valid ? snap->baro.altitude_m : snap->gps.altitude_m;
+
+    if (snap->gps.fix_valid) {
+        if (s_last_lat != 0 && s_last_lon != 0) {
+            float dist = TinyGPSPlus::distanceBetween(s_last_lat, s_last_lon, snap->gps.latitude, snap->gps.longitude);
+            if (dist > 1.0f) {
+                s_session_distance += dist;
+                s_last_lat = snap->gps.latitude;
+                s_last_lon = snap->gps.longitude;
+            }
+        } else {
+            s_last_lat = snap->gps.latitude;
+            s_last_lon = snap->gps.longitude;
+        }
+    }
 
     // Track standby condition
     if (v < 1.0f) {
@@ -282,4 +303,9 @@ void sd_logger_flush(void) {
 void sd_logger_get_stats(uint32_t *points_logged, size_t *buffer_usage) {
     if (points_logged) *points_logged = s_points_logged;
     if (buffer_usage) *buffer_usage = s_log_buffer_len;
+}
+
+void sd_logger_get_summary(float *distance_m, uint32_t *duration_s) {
+    if (distance_m) *distance_m = s_session_distance;
+    if (duration_s) *duration_s = s_session_start_ms > 0 ? (millis() - s_session_start_ms) / 1000 : 0;
 }
