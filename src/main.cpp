@@ -418,10 +418,7 @@ void setup() {
     Serial.flush();
 
     // ── MicroSD Logger (SPI2, CS=GPIO15) ──────────────────────────────────────
-    if (example_lvgl_lock(-1)) {
-        sd_logger_init(&g_snap);
-        example_lvgl_unlock();
-    }
+    sd_logger_init(&g_snap);
     Serial.flush();
 
     tLastSensor = millis();
@@ -444,18 +441,24 @@ void loop() {
     static const uint32_t SCREEN_TIMEOUT_MS = 20000; // 20s tắt màn hình
 
     // ── 1. Đánh thức khi chạm màn hình ──────────────────────────────────────
-    if (example_lvgl_lock(-1)) {
-        if (lv_disp_get_inactive_time(NULL) < 100) {
-            lastActivityTime = now;
+    static uint32_t last_inact_check = 0;
+    if (now - last_inact_check >= 100) {
+        last_inact_check = now;
+        if (example_lvgl_lock(-1)) {
+            if (lv_disp_get_inactive_time(NULL) < 100) {
+                lastActivityTime = now;
+            }
+            example_lvgl_unlock();
         }
-        example_lvgl_unlock();
     }
 
     // ── 2. Đánh thức khi có rung lắc (Wake-on-motion) ───────────────────────
     if (g_snap.imu.valid) {
-        if (abs(g_snap.imu.pitch_deg - lastPitch) > 15.0f || 
-            abs(g_snap.imu.roll_deg - lastRoll) > 15.0f) {
-            lastActivityTime = now; 
+        if (isScreenOn) {
+            if (abs(g_snap.imu.pitch_deg - lastPitch) > 15.0f || 
+                abs(g_snap.imu.roll_deg - lastRoll) > 15.0f) {
+                lastActivityTime = now; 
+            }
         }
         lastPitch = g_snap.imu.pitch_deg;
         lastRoll  = g_snap.imu.roll_deg;

@@ -39,16 +39,10 @@ static uint32_t s_points_logged = 0;
 
 static void flush_buffer_to_sd() {
     if (s_log_file && s_log_buffer_len > 0) {
-        // Bung max cong suat CPU de ghi SD nhanh nhat (Race to Sleep)
-        uint32_t old_freq = getCpuFrequencyMhz();
-        setCpuFrequencyMhz(160); 
-
         fwrite(s_log_buffer, 1, s_log_buffer_len, s_log_file);
         fflush(s_log_file);
         s_log_buffer_len = 0;
         s_last_flush_time = millis();
-
-        setCpuFrequencyMhz(old_freq); // Tra ve xung nhip cu
     }
 }
 
