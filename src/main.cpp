@@ -247,8 +247,11 @@ static void readSensors() {
                                    gpsParser.satellites.value() : 0;
         g_snap.gps.speed_kmh    = gpsParser.speed.isValid() ?
                                    gpsParser.speed.kmph() : 0.0f;
-        g_snap.gps.altitude_m   = gpsParser.altitude.isValid() ?
+        g_snap.gps.altitude_valid = gpsParser.altitude.isValid();
+        g_snap.gps.altitude_m   = g_snap.gps.altitude_valid ?
                                    gpsParser.altitude.meters() : 0.0f;
+        g_snap.gps.hdop         = gpsParser.hdop.isValid() ?
+                                   (float)gpsParser.hdop.hdop() : 99.9f;
         g_snap.gps.course_deg   = gpsParser.course.isValid() ?
                                    (float)gpsParser.course.deg() : 0.0f;
         g_snap.gps.chars_proc   = gpsParser.charsProcessed();
@@ -296,11 +299,50 @@ static void readSensors() {
         }
 
         // ── BMP580 ────────────────────────────────────────────────────────────────
+        // Cao độ khí áp kế: h = 44330 * (1 - (P/P0)^0.1903)
+        // Hiệu chuẩn P0 tự động khi GPS đạt sóng tốt (sats >= 5, hdop <= 2.5)
+        // Tích lũy 8 mẫu hợp lệ (không reset trắng bộ đệm nếu có 1 giây nhiễu)
+        static float    s_p0_hpa          = 1013.25f;
+        static bool     s_baro_cal        = false;
+        static uint8_t  s_cal_best_sats   = 0;
+        static double   s_cal_sum_p0      = 0;
+        static uint8_t  s_cal_count       = 0;
+        static const uint8_t CAL_SAMPLES  = 8;
+
         if (bmpOk && bmp.performReading()) {
             g_snap.baro.pressure_hpa  = bmp.pressure;
             g_snap.baro.temperature_c = bmp.temperature;
-            float ratio = g_snap.baro.pressure_hpa / 1013.25f;
-            g_snap.baro.altitude_m = 44330.0f * (1.0f - powf(ratio, 0.1903f));
+
+            bool gps_usable = g_snap.gps.fix_valid && g_snap.gps.altitude_valid &&
+                              g_snap.gps.satellites >= 5 &&
+                              (g_snap.gps.hdop <= 2.5f || g_snap.gps.hdop > 90.0f);
+
+            bool can_calibrate = (!s_baro_cal) || (g_snap.gps.satellites >= s_cal_best_sats + 2);
+            if (can_calibrate && gps_usable) {
+                float k = 1.0f - g_snap.gps.altitude_m / 44330.0f;
+                if (k > 0.5f) {
+                    float p0 = g_snap.baro.pressure_hpa / powf(k, 5.255f);
+                    if (p0 > 970.0f && p0 < 1060.0f) {
+                        s_cal_sum_p0 += p0;
+                        s_cal_count++;
+                    }
+                }
+
+                if (s_cal_count >= CAL_SAMPLES) {
+                    s_p0_hpa         = (float)(s_cal_sum_p0 / s_cal_count);
+                    s_baro_cal       = true;
+                    s_cal_best_sats  = (uint8_t)g_snap.gps.satellites;
+                    s_cal_count      = 0;
+                    s_cal_sum_p0     = 0;
+                    Serial.printf("[BARO] Da hieu chinh P0 = %.2f hPa (sats=%u, hdop=%.2f, Alt_GPS=%.1fm)\n",
+                                  s_p0_hpa, s_cal_best_sats, g_snap.gps.hdop, g_snap.gps.altitude_m);
+                }
+            }
+
+            float ratio = g_snap.baro.pressure_hpa / s_p0_hpa;
+            g_snap.baro.altitude_m    = 44330.0f * (1.0f - powf(ratio, 0.1903f));
+            g_snap.baro.sea_level_hpa = s_p0_hpa;
+            g_snap.baro.calibrated    = s_baro_cal;
             g_snap.baro.valid = true;
         } else {
             g_snap.baro.valid = false;
@@ -340,9 +382,11 @@ static void printSerial() {
     {
         long sI = (long)g_snap.gps.speed_kmh;
         long sD = (long)((g_snap.gps.speed_kmh-sI)*10);
-        Serial.printf("    Speed  : %ld.%01ld km/h  Sats: %lu  Course: %ld deg\n",
+        long hdI = (long)g_snap.gps.hdop;
+        long hdD = (long)((g_snap.gps.hdop - hdI) * 100);
+        Serial.printf("    Speed  : %ld.%01ld km/h  Sats: %lu (HDOP: %ld.%02ld)  Course: %ld deg\n",
             sI, sD, (unsigned long)g_snap.gps.satellites,
-            (long)g_snap.gps.course_deg);
+            hdI, labs(hdD), (long)g_snap.gps.course_deg);
         Serial.printf("    NMEA   : chars=%lu  fixes=%lu  err=%lu\n",
             (unsigned long)g_snap.gps.chars_proc,
             (unsigned long)g_snap.gps.fixes,
@@ -359,8 +403,9 @@ static void printSerial() {
         long aI = (long)g_snap.baro.altitude_m;
         long aD = (long)((g_snap.baro.altitude_m >= 0 ?
                    g_snap.baro.altitude_m-aI : -g_snap.baro.altitude_m+aI)*10);
-        Serial.printf("    T: %ld.%02ld C  P: %ld.%02ld hPa  Alt: %ld.%01ld m\n",
-            tI, labs(tD), pI, labs(pD), aI, labs(aD));
+        Serial.printf("    T: %ld.%02ld C  P: %ld.%02ld hPa  Alt: %ld.%01ld m %s\n",
+            tI, labs(tD), pI, labs(pD), aI, labs(aD),
+            g_snap.baro.calibrated ? "(DA CALIBRATE)" : "(CHUA CALIBRATE, P0=1013.25)");
     } else {
         Serial.println(F("    Sensor chưa sẵn sàng."));
     }

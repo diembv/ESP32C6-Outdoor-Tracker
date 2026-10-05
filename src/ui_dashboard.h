@@ -65,6 +65,9 @@ struct GpsData {
     uint32_t chars_proc;    // NMEA chars processed
     uint32_t fixes;         // sentences with fix
     uint32_t checksum_err;  // failed checksum
+
+    bool     altitude_valid; // gpsParser.altitude.isValid()
+    float    hdop;           // Horizontal Dilution of Precision (99.9 = không hợp lệ)
 };
 
 struct BaroData {
@@ -72,6 +75,8 @@ struct BaroData {
     float temperature_c;    // nhiệt độ °C
     float altitude_m;       // cao độ baro (m) — tính từ áp suất
     bool  valid;            // sensor đọc được
+    bool  calibrated;       // true = đã hiệu chỉnh áp suất mốc P0 bằng cao độ GPS
+    float sea_level_hpa;    // áp suất mốc mực nước biển P0 đang dùng (mặc định 1013.25)
 };
 
 struct ImuData {

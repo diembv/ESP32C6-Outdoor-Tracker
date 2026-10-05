@@ -243,13 +243,41 @@ Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 
 
 ---
 
-## [x] Milestone 5 — Power & Data Logging (Đã hoàn thành cơ bản, chuyển sang pha tối ưu)
+## [x] Milestone 5 — Power & Data Logging (Đã hoàn thiện & Tối ưu hóa sâu)
+
+### 1. Quản lý Nguồn & Lưu trữ MicroSD
 - [x] Đọc ADC pin Li-Po (GPIO0), hiển thị điện áp (V) và % trên màn hình System & Header.
-- [x] Khởi tạo MicroSD qua `esp_vfs_fat_sdspi_mount` (SPI2_HOST, CS=GPIO15).
-- [x] **Tối ưu hóa Logging (Đã hoàn thành):**
-  - [x] Thêm nút bấm Start/Stop Logging trên giao diện để tránh ghi rác thẻ nhớ.
-  - [x] Triển khai bộ đệm (1KB) trong RAM: Gom cụm dữ liệu trước khi ghi khối xuống thẻ SD để giảm hao mòn flash và tiết kiệm pin.
-  - [x] Đặt tên file log tự động theo GPS UTC Timestamp (`YYYYMMDD_HHMMSS.csv`).
+- [x] Khởi tạo MicroSD an toàn qua `esp_vfs_fat_sdspi_mount` (SPI2_HOST, CS=GPIO15, Bus chia sẻ với AMOLED).
+- [x] Nút bấm Start/Stop Logging trên giao diện System kèm hiển thị thống kê điểm ghi và dung lượng RAM buffer.
+
+### 2. Tối ưu hóa Module Ghi Log Compact CSV Siêu Nhẹ (Tonight - 2026-10-05)
+- [x] **Cấu trúc dữ liệu & Đặt tên file:**
+  - Tự động tạo file theo định dạng `/sdcard/logs/YYYYMMDD_HHMMSS.csv` (fallback: `/sdcard/logs/track_001.csv` khi chưa có GPS).
+  - Tiêu đề ngắn gọn: `ts,lat,lon,alt\n`.
+  - Bản ghi siêu rút gọn (~32–35 bytes/dòng): dùng Unix Epoch Timestamp UTC (`ts`), tọa độ 6 số thập phân, cao độ hiệu chuẩn (`alt`), loại bỏ trường `speed` (ứng dụng như Strava sẽ tự nội suy vận tốc).
+  - Tiết kiệm hơn **80–85% dung lượng** so với định dạng GPX/XML ban đầu.
+- [x] **Chiến lược SPI Flush & Giảm hao mòn bộ nhớ Flash:**
+  - Bộ đệm tĩnh RAM 1024 bytes gom ~30 điểm Smart Logging trước khi ghi khối.
+  - Chỉ kích hoạt ghi khối (`fwrite`) và chốt sector (`fflush` + `fsync`) khi bộ đệm tích lũy $\ge 512$ bytes (chuẩn 1 sector FATFS) hoặc sau 60 giây chờ.
+  - Khi bấm STOP: Flush toàn bộ byte còn lại trong RAM buffer và đóng file an toàn (`fsync` + `fclose`).
+
+### 3. Khắc phục các Lỗi Phát sinh (Tonight - 2026-10-05)
+- [x] **Sửa lỗi cú pháp XML GPX (`</trkpt À`):**
+  - Phát hiện nguyên nhân: `line_buf[128]` bị hụt kích thước khiến `memcpy` đọc tràn byte rác trên stack (`0xC0` $\rightarrow$ `À`). Đã nâng lên 256 bytes và kiểm soát chặt chẽ giá trị trả về của `snprintf`.
+  - Bổ sung lệnh `fsync(fileno())` ép dữ liệu ghi thực sự xuống sector vật lý thay vì chỉ nằm ở tầng đệm FATFS.
+- [x] **Sửa lỗi ngắt log đột ngột khi cắm nguồn USB:**
+  - Phát hiện nguyên nhân: Khi chưa cắm pin Li-Po mà cấp nguồn qua cáp USB, chân ADC GPIO0 bị thả nổi đo được ~3.19V $\rightarrow$ cơ chế tự ngắt khi pin < 3.45V hiểu nhầm là pin cạn nên tự ngắt ngay khi vừa bấm Start.
+  - Khắc phục: Gỡ bỏ lệnh ngắt bắt buộc, chuyển thành cảnh báo Serial định kỳ, cho phép hoạt động hoàn hảo cả khi dùng pin, cắm sạc dự phòng hoặc cắm USB máy tính.
+- [x] **Sửa lỗi Baro kẹt ở `-36m` & Tối ưu thuật toán Auto-Calibration (Garmin-Style):**
+  - Bản chất: BMP580 đo chênh lệch áp suất cực nhạy (từng bước chân), GPS chỉ đóng vai trò "mỏ neo" để gán mốc mực nước biển $P_0$.
+  - Khắc phục: Bản cập nhật trước đòi hỏi điều kiện quá ngặt nghèo ($\ge 7$ vệ tinh và $\text{HDOP} \le 1.3$ liên tục 30s không được sụt 1s nào) khiến hệ thống không bao giờ chốt được mốc $P_0$, dẫn tới BMP580 bị kẹt ở mốc chuẩn quốc tế 1013.25 hPa (tính ra $-36\text{m}$).
+  - Cải tiến: Nới lỏng điều kiện thực tế ($\ge 5$ vệ tinh, $\text{HDOP} \le 2.5$), tích lũy 8 mẫu hợp lệ (không reset trắng bộ đệm nếu có 1 giây nhiễu), bổ sung hiển thị trực quan HDOP và trạng thái `(DA CALIBRATE)` trên Serial.
+
+### 4. Công cụ Chuyển đổi Tự động (`tools/csv_to_gpx.py`)
+- [x] Viết script Python độc lập (chỉ dùng thư viện chuẩn Python 3, không cần cài thư viện ngoài).
+- [x] Hỗ trợ kéo-thả file hoặc dòng lệnh CLI, tự động chuyển đổi Unix Epoch Timestamp thành chuẩn ISO 8601 UTC.
+- [x] Xuất file GPX 1.1 chuẩn schema quốc tế, tương thích 100% với Strava, Garmin Connect, Google Earth, GPX Studio,...
+- [x] Đã xử lý sẵn tương thích lỗi bảng mã console Windows (CP1252 `UnicodeEncodeError`).
 
 ---
 
