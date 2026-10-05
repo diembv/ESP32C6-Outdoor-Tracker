@@ -38,7 +38,7 @@ static const sh8601_lcd_init_cmd_t lcd_init_cmds[] =
 
   {0x29, (uint8_t []){0x00}, 0, 10},
 
-  {0x51, (uint8_t []){0xFF}, 1, 0},    //亮度
+  {0x51, (uint8_t []){0xB4}, 1, 0},    // 亮度 (180 ~70%, tiet kiem dien chong sut ap)
 };
 
 void lcd_lvgl_Init(void)
@@ -217,6 +217,7 @@ static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
 
 esp_err_t set_amoled_backlight(uint8_t brig)
 {
+  if (brig > 180) brig = 180; // Gioi han 180 (~70%) chong sut ap nguon USB
   uint32_t lcd_cmd = 0x51;
   lcd_cmd &= 0xff;
   lcd_cmd <<= 8;

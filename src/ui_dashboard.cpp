@@ -129,17 +129,7 @@ static void style_tile(lv_obj_t *tile)
     strip_scrollbar(tile);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Event Handler cho Swipe Up -> Về màn chính
-// ═══════════════════════════════════════════════════════════════════════════════
-static void swipe_gesture_cb(lv_event_t * e)
-{
-    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
-    if (dir == LV_DIR_TOP) {
-        // Vuốt từ dưới lên -> Về tile 1 (Sensors)
-        lv_obj_set_tile_id(s_tileview, 1, 0, LV_ANIM_ON);
-    }
-}
+// Swipe gesture callback removed: s_tileview handles native horizontal swipes smoothly without interference.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Tile 0: Navigation (Bên trái)
@@ -226,6 +216,14 @@ static void mbox_close_cb(lv_event_t * e) {
 static void btn_log_event_cb(lv_event_t * e) {
     lv_event_code_t code = lv_event_get_code(e);
     if(code == LV_EVENT_CLICKED) {
+        if (!g_snap.sys.sd_present || !g_snap.sys.sd_ok) {
+            static const char * btns[] = {"OK", ""};
+            lv_obj_t * mbox = lv_msgbox_create(NULL, "SD CARD ERROR", "No MicroSD card inserted\nor card not mounted.", btns, false);
+            lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
+            lv_obj_center(mbox);
+            return;
+        }
+
         if (g_snap.sys.is_logging_active) {
             sd_logger_toggle(&g_snap);
             
@@ -315,16 +313,20 @@ static void build_tile2_system(lv_obj_t *tile)
     lv_obj_set_style_text_color(t0_lbl_sd, CLR_ACCENT, 0);
     lv_obj_set_pos(t0_lbl_sd, 8, 278);
 
-    // Nút Bật/Tắt Ghi Log
+    // Nút Bật/Tắt Ghi Log (Kích thước lớn hơn, mở rộng vùng cảm ứng)
     t0_btn_log = lv_btn_create(tile);
-    lv_obj_set_size(t0_btn_log, 200, 50);
-    lv_obj_align(t0_btn_log, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_size(t0_btn_log, 240, 56);
+    lv_obj_align(t0_btn_log, LV_ALIGN_BOTTOM_MID, 0, -15);
+    lv_obj_clear_flag(t0_btn_log, LV_OBJ_FLAG_SCROLL_CHAIN); // Không cho cuộn cướp chạm
+    lv_obj_set_ext_click_area(t0_btn_log, 20);               // Mở rộng hitbox chạm thêm 20px
+    lv_obj_set_style_bg_color(t0_btn_log, lv_color_hex(0x2A3B4C), 0);
+    lv_obj_set_style_bg_color(t0_btn_log, lv_color_hex(0x007ACC), LV_STATE_PRESSED);
     lv_obj_add_event_cb(t0_btn_log, btn_log_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_set_style_bg_color(t0_btn_log, CLR_BORDER, 0); // Default color
 
     t0_lbl_btn_log = lv_label_create(t0_btn_log);
     lv_label_set_text(t0_lbl_btn_log, "START LOGGING");
     lv_obj_set_style_text_font(t0_lbl_btn_log, &lv_font_montserrat_20, 0);
+    lv_obj_clear_flag(t0_lbl_btn_log, LV_OBJ_FLAG_CLICKABLE); // Chữ không cản trở sự kiện nút
     lv_obj_center(t0_lbl_btn_log);
 }
 
@@ -355,8 +357,6 @@ void ui_dashboard_init(void)
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     strip_scrollbar(scr);
 
-    // Gán gesture cho toàn màn hình
-    lv_obj_add_event_cb(scr, swipe_gesture_cb, LV_EVENT_GESTURE, NULL);
 
     s_tileview = lv_tileview_create(scr);
     lv_obj_set_size(s_tileview, SCREEN_W, SCREEN_H);
@@ -391,175 +391,183 @@ void ui_dashboard_update(const SensorSnapshot *snap)
     if (!snap) return;
     char buf[128];
 
-    // ═══ Tile 1: Sensors (Chính) ═════════════════════════════════════════════
-    lv_obj_set_style_bg_color(t1_dot_fix, snap->gps.fix_valid ? CLR_GREEN : CLR_RED, 0);
+    lv_obj_t *act_tile = s_tileview ? lv_tileview_get_tile_act(s_tileview) : NULL;
 
-    char timeStr[16] = "--:-- --";
-    if (snap->gps.time_valid) {
-        uint8_t local_h = (snap->gps.hour + 7) % 24;
-        uint8_t h12 = local_h % 12;
-        if (h12 == 0) h12 = 12;
-        const char *ampm = (local_h >= 12) ? "PM" : "AM";
-        snprintf(timeStr, sizeof(timeStr), "%02d:%02d %s", h12, snap->gps.minute, ampm);
+    // ═══ Tile 1: Sensors (Trang chính ở giữa) ═════════════════════════════════
+    if (!act_tile || act_tile == s_tile[1]) {
+        lv_obj_set_style_bg_color(t1_dot_fix, snap->gps.fix_valid ? CLR_GREEN : CLR_RED, 0);
+
+        char timeStr[16] = "--:-- --";
+        if (snap->gps.time_valid) {
+            uint8_t local_h = (snap->gps.hour + 7) % 24;
+            uint8_t h12 = local_h % 12;
+            if (h12 == 0) h12 = 12;
+            const char *ampm = (local_h >= 12) ? "PM" : "AM";
+            snprintf(timeStr, sizeof(timeStr), "%02d:%02d %s", h12, snap->gps.minute, ampm);
+        }
+        snprintf(buf, sizeof(buf), "Sats: %lu | %s | %d%%", 
+                 (unsigned long)snap->gps.satellites, timeStr, (int)snap->sys.battery_pct);
+        lv_label_set_text(t1_lbl_header, buf);
+
+        snprintf(buf, sizeof(buf), "%.1f km/h", snap->gps.speed_kmh);
+        lv_label_set_text(t1_lbl_speed, buf);
+
+        if (snap->gps.fix_valid) {
+            double absLat = snap->gps.latitude >= 0 ? snap->gps.latitude : -snap->gps.latitude;
+            double absLon = snap->gps.longitude >= 0 ? snap->gps.longitude : -snap->gps.longitude;
+            char cLat = snap->gps.latitude >= 0 ? 'N' : 'S';
+            char cLon = snap->gps.longitude >= 0 ? 'E' : 'W';
+
+            int32_t latInt = (int32_t)absLat;
+            int32_t latDec = (int32_t)((absLat - latInt) * 1000000);
+            int32_t lonInt = (int32_t)absLon;
+            int32_t lonDec = (int32_t)((absLon - lonInt) * 1000000);
+
+            int32_t gpsAltInt = (int32_t)snap->gps.altitude_m;
+            int32_t gpsAltDec = (int32_t)((snap->gps.altitude_m >= 0 ? snap->gps.altitude_m - gpsAltInt : -(snap->gps.altitude_m) - (-gpsAltInt)) * 10);
+
+            snprintf(buf, sizeof(buf), "%ld.%06ld %c\n%ld.%06ld %c\nAlt: %ld.%01ld m (GPS)", 
+                     (long)latInt, (long)latDec, cLat,
+                     (long)lonInt, (long)lonDec, cLon,
+                     (long)gpsAltInt, (long)abs(gpsAltDec));
+        } else {
+            snprintf(buf, sizeof(buf), "--.------ N\n--.------ E\nAlt: -- m (GPS)");
+        }
+        lv_label_set_text(t1_lbl_coords, buf);
+
+        // Gộp Alt Baro, P, T, Pitch, Roll
+        char baroPart[64] = "-- C\n-- hPa  |  Baro: -- m";
+        if (snap->baro.valid) {
+            int32_t tInt = (int32_t)snap->baro.temperature_c;
+            int32_t tDec = (int32_t)((snap->baro.temperature_c >= 0 ? snap->baro.temperature_c - tInt : -snap->baro.temperature_c + tInt) * 10);
+            int32_t pInt = (int32_t)snap->baro.pressure_hpa;
+            int32_t pDec = (int32_t)((snap->baro.pressure_hpa - pInt) * 10);
+            int32_t altInt = (int32_t)snap->baro.altitude_m;
+            int32_t altDec = (int32_t)((snap->baro.altitude_m >= 0 ? snap->baro.altitude_m - altInt : -(snap->baro.altitude_m) - (-altInt)) * 10);
+
+            snprintf(baroPart, sizeof(baroPart), "%ld.%01ld C\n%ld.%01ld hPa  |  Baro: %ld.%01ld m", 
+                     (long)tInt, (long)abs(tDec),
+                     (long)pInt, (long)abs(pDec), 
+                     (long)altInt, (long)abs(altDec));
+        }
+
+        char imuPart[64] = "P: --  |  R: --";
+        if (snap->imu.valid) {
+            float p = snap->imu.pitch_deg;
+            float r = snap->imu.roll_deg;
+            int32_t pi = (int32_t)p;
+            int32_t pd = (int32_t)((p >= 0 ? p - pi : -p + pi) * 10);
+            int32_t ri = (int32_t)r;
+            int32_t rd = (int32_t)((r >= 0 ? r - ri : -r + ri) * 10);
+
+            char psign = (p < 0) ? '-' : ' ';
+            char rsign = (r < 0) ? '-' : ' ';
+            snprintf(imuPart, sizeof(imuPart), "P: %c%ld.%01ld  |  R: %c%ld.%01ld", 
+                     psign, (long)abs(pi), (long)abs(pd),
+                     rsign, (long)abs(ri), (long)abs(rd));
+        }
+
+        snprintf(buf, sizeof(buf), "%s\n%s", baroPart, imuPart);
+        lv_label_set_text(t1_lbl_env, buf);
     }
-    
-    snprintf(buf, sizeof(buf), "Sats: %lu | %s | %d%%", 
-             (unsigned long)snap->gps.satellites, timeStr, (int)snap->sys.battery_pct);
-    lv_label_set_text(t1_lbl_header, buf);
-
-    snprintf(buf, sizeof(buf), "%.1f km/h", snap->gps.speed_kmh);
-    lv_label_set_text(t1_lbl_speed, buf);
-
-    if (snap->gps.fix_valid) {
-        double absLat = snap->gps.latitude >= 0 ? snap->gps.latitude : -snap->gps.latitude;
-        double absLon = snap->gps.longitude >= 0 ? snap->gps.longitude : -snap->gps.longitude;
-        char cLat = snap->gps.latitude >= 0 ? 'N' : 'S';
-        char cLon = snap->gps.longitude >= 0 ? 'E' : 'W';
-
-        int32_t latInt = (int32_t)absLat;
-        int32_t latDec = (int32_t)((absLat - latInt) * 1000000);
-        int32_t lonInt = (int32_t)absLon;
-        int32_t lonDec = (int32_t)((absLon - lonInt) * 1000000);
-
-        int32_t gpsAltInt = (int32_t)snap->gps.altitude_m;
-        int32_t gpsAltDec = (int32_t)((snap->gps.altitude_m >= 0 ? snap->gps.altitude_m - gpsAltInt : -(snap->gps.altitude_m) - (-gpsAltInt)) * 10);
-
-        snprintf(buf, sizeof(buf), "%ld.%06ld %c\n%ld.%06ld %c\nAlt: %ld.%01ld m (GPS)", 
-                 (long)latInt, (long)latDec, cLat,
-                 (long)lonInt, (long)lonDec, cLon,
-                 (long)gpsAltInt, (long)abs(gpsAltDec));
-    } else {
-        snprintf(buf, sizeof(buf), "--.------ N\n--.------ E\nAlt: -- m (GPS)");
-    }
-    lv_label_set_text(t1_lbl_coords, buf);
-
-    // Gộp Alt Baro, P, T, Pitch, Roll
-    char baroPart[64] = "-- C\n-- hPa  |  Baro: -- m";
-    if (snap->baro.valid) {
-        int32_t tInt = (int32_t)snap->baro.temperature_c;
-        int32_t tDec = (int32_t)((snap->baro.temperature_c >= 0 ? snap->baro.temperature_c - tInt : -snap->baro.temperature_c + tInt) * 10);
-        int32_t pInt = (int32_t)snap->baro.pressure_hpa;
-        int32_t pDec = (int32_t)((snap->baro.pressure_hpa - pInt) * 10);
-        int32_t altInt = (int32_t)snap->baro.altitude_m;
-        int32_t altDec = (int32_t)((snap->baro.altitude_m >= 0 ? snap->baro.altitude_m - altInt : -(snap->baro.altitude_m) - (-altInt)) * 10);
-
-        snprintf(baroPart, sizeof(baroPart), "%ld.%01ld C\n%ld.%01ld hPa  |  Baro: %ld.%01ld m", 
-                 (long)tInt, (long)abs(tDec),
-                 (long)pInt, (long)abs(pDec), 
-                 (long)altInt, (long)abs(altDec));
-    }
-
-    char imuPart[64] = "P: --  |  R: --";
-    if (snap->imu.valid) {
-        float p = snap->imu.pitch_deg;
-        float r = snap->imu.roll_deg;
-        int32_t pi = (int32_t)p;
-        int32_t pd = (int32_t)((p >= 0 ? p - pi : -p + pi) * 10);
-        int32_t ri = (int32_t)r;
-        int32_t rd = (int32_t)((r >= 0 ? r - ri : -r + ri) * 10);
-
-        char psign = (p < 0) ? '-' : ' ';
-        char rsign = (r < 0) ? '-' : ' ';
-        snprintf(imuPart, sizeof(imuPart), "P: %c%ld.%01ld  |  R: %c%ld.%01ld", 
-                 psign, (long)abs(pi), (long)abs(pd),
-                 rsign, (long)abs(ri), (long)abs(rd));
-    }
-
-    snprintf(buf, sizeof(buf), "%s\n%s", baroPart, imuPart);
-    lv_label_set_text(t1_lbl_env, buf);
-
-    // ═══ Tile 0: Navigation (Trái) ════════════════════════════════════════════
-    {
+    // ═══ Tile 0: Navigation (Trang bên trái) ══════════════════════════════════
+    else if (act_tile == s_tile[0]) {
         const char *dir = course_to_dir(snap->gps.course_deg);
         int32_t courseInt = (int32_t)snap->gps.course_deg;
         snprintf(buf, sizeof(buf), "%s (%03ld deg)", dir, (long)courseInt);
         lv_label_set_text(t2_lbl_direction, buf);
+
+        if (snap->gps.fix_valid && snap->gps.speed_kmh > 0.5f) {
+            lv_obj_set_style_text_color(t2_lbl_note, CLR_GREEN, 0);
+        } else {
+            lv_obj_set_style_text_color(t2_lbl_note, CLR_DIMTEXT, 0);
+        }
     }
-    if (snap->gps.fix_valid && snap->gps.speed_kmh > 0.5f) {
-        lv_obj_set_style_text_color(t2_lbl_note, CLR_GREEN, 0);
-    } else {
-        lv_obj_set_style_text_color(t2_lbl_note, CLR_DIMTEXT, 0);
-    }
+    // ═══ Tile 2: System (Trang bên phải) ══════════════════════════════════════
+    else if (act_tile == s_tile[2]) {
+        lv_obj_set_style_bg_color(t0_dot_gps, snap->gps.fix_valid ? CLR_GREEN : CLR_RED, 0);
 
-    // ═══ Tile 2: System (Phải) ════════════════════════════════════════════════
-    lv_obj_set_style_bg_color(t0_dot_gps, snap->gps.fix_valid ? CLR_GREEN : CLR_RED, 0);
+        {
+            uint32_t chars_k = snap->gps.chars_proc / 1000;
+            uint32_t chars_r = snap->gps.chars_proc % 1000 / 100;
+            snprintf(buf, sizeof(buf), "chars=%lu.%luk  fixes=%lu  err=%lu",
+                     (unsigned long)chars_k, (unsigned long)chars_r,
+                     (unsigned long)snap->gps.fixes, (unsigned long)snap->gps.checksum_err);
+            lv_label_set_text(t0_lbl_gps_stats, buf);
+        }
 
-    {
-        uint32_t chars_k = snap->gps.chars_proc / 1000;
-        uint32_t chars_r = snap->gps.chars_proc % 1000 / 100;
-        snprintf(buf, sizeof(buf), "chars=%lu.%luk  fixes=%lu  err=%lu",
-                 (unsigned long)chars_k, (unsigned long)chars_r,
-                 (unsigned long)snap->gps.fixes, (unsigned long)snap->gps.checksum_err);
-        lv_label_set_text(t0_lbl_gps_stats, buf);
-    }
+        if (snap->gps.date_valid && snap->gps.time_valid) {
+            uint8_t local_h = (snap->gps.hour + 7) % 24;
+            snprintf(buf, sizeof(buf), "%02u/%02u/%04u  %02u:%02u:%02u",
+                     snap->gps.day, snap->gps.month, snap->gps.year,
+                     local_h, snap->gps.minute, snap->gps.second);
+            lv_label_set_text(t0_lbl_datetime, buf);
+        } else {
+            lv_label_set_text(t0_lbl_datetime, "--/--/----  --:----");
+        }
 
-    if (snap->gps.date_valid && snap->gps.time_valid) {
-        // Simple GMT+7 shift
-        uint8_t local_h = (snap->gps.hour + 7) % 24;
-        // Chú ý: Đây là phép tính đơn giản, nếu local_h < snap->gps.hour thì tức là đã qua ngày mới,
-        // thực tế cần tăng ngày tháng năm lên tương ứng. Ở mức demo ta giữ nguyên ngày.
-        snprintf(buf, sizeof(buf), "%02u/%02u/%04u  %02u:%02u:%02u",
-                 snap->gps.day, snap->gps.month, snap->gps.year,
-                 local_h, snap->gps.minute, snap->gps.second);
-        lv_label_set_text(t0_lbl_datetime, buf);
-    } else {
-        lv_label_set_text(t0_lbl_datetime, "--/--/----  --:----");
-    }
+        {
+            uint32_t h = snap->sys.uptime_s / 3600;
+            uint32_t m = (snap->sys.uptime_s % 3600) / 60;
+            uint32_t s = snap->sys.uptime_s % 60;
+            snprintf(buf, sizeof(buf), "%02lu:%02lu:%02lu  #%lu %s", (unsigned long)h, (unsigned long)m, (unsigned long)s,
+                     (unsigned long)snap->sys.boot_count,
+                     snap->sys.reset_reason ? snap->sys.reset_reason : "");
+            lv_label_set_text(t0_lbl_uptime, buf);
+        }
 
-    {
-        uint32_t h = snap->sys.uptime_s / 3600;
-        uint32_t m = (snap->sys.uptime_s % 3600) / 60;
-        uint32_t s = snap->sys.uptime_s % 60;
-        snprintf(buf, sizeof(buf), "%02lu:%02lu:%02lu", (unsigned long)h, (unsigned long)m, (unsigned long)s);
-        lv_label_set_text(t0_lbl_uptime, buf);
-    }
+        // Battery (Thêm hiển thị Volts)
+        int32_t vInt = (int32_t)snap->sys.battery_v;
+        int32_t vDec = (int32_t)((snap->sys.battery_v - vInt) * 100);
+        snprintf(buf, sizeof(buf), "%ld.%02ld V  |  %d %%", (long)vInt, (long)abs(vDec), (int)snap->sys.battery_pct);
+        lv_label_set_text(t0_lbl_battery, buf);
 
-    // Battery (Thêm hiển thị Volts)
-    int32_t vInt = (int32_t)snap->sys.battery_v;
-    int32_t vDec = (int32_t)((snap->sys.battery_v - vInt) * 100);
-    snprintf(buf, sizeof(buf), "%ld.%02ld V  |  %d %%", (long)vInt, (long)abs(vDec), (int)snap->sys.battery_pct);
-    lv_label_set_text(t0_lbl_battery, buf);
-
-    if (snap->sys.sd_present && snap->sys.sd_ok) {
-        if (snap->sys.is_logging_active) {
-            uint32_t pts = 0;
-            size_t buf_usage = 0;
-            sd_logger_get_stats(&pts, &buf_usage);
-            snprintf(buf, sizeof(buf), "REC: %lu pts | RAM: %u/1024B", (unsigned long)pts, (unsigned int)buf_usage);
-            lv_label_set_text(t0_lbl_sd, buf);
-            // Blink text color
-            if ((millis() / 500) % 2 == 0) {
-                lv_obj_set_style_text_color(t0_lbl_sd, CLR_YELLOW, 0);
+        if (snap->sys.sd_present && snap->sys.sd_ok) {
+            if (snap->sys.is_logging_active) {
+                uint32_t pts = 0;
+                size_t buf_usage = 0;
+                sd_logger_get_stats(&pts, &buf_usage);
+                snprintf(buf, sizeof(buf), "REC: %lu pts | RAM: %u/1024B", (unsigned long)pts, (unsigned int)buf_usage);
+                lv_label_set_text(t0_lbl_sd, buf);
+                // Blink text color
+                if ((millis() / 500) % 2 == 0) {
+                    lv_obj_set_style_text_color(t0_lbl_sd, CLR_YELLOW, 0);
+                } else {
+                    lv_obj_set_style_text_color(t0_lbl_sd, CLR_GREEN, 0);
+                }
             } else {
+                snprintf(buf, sizeof(buf), "OK (%lu MB free)", (unsigned long)snap->sys.sd_free_mb);
+                lv_label_set_text(t0_lbl_sd, buf);
                 lv_obj_set_style_text_color(t0_lbl_sd, CLR_GREEN, 0);
             }
         } else {
-            snprintf(buf, sizeof(buf), "OK (%lu MB free)", (unsigned long)snap->sys.sd_free_mb);
-            lv_label_set_text(t0_lbl_sd, buf);
-            lv_obj_set_style_text_color(t0_lbl_sd, CLR_GREEN, 0);
+            if (snap->sys.sd_free_mb > 0) {
+                snprintf(buf, sizeof(buf), "Error 0x%X", (unsigned int)snap->sys.sd_free_mb);
+                lv_label_set_text(t0_lbl_sd, buf);
+            } else {
+                lv_label_set_text(t0_lbl_sd, "No SD card");
+            }
+            lv_obj_set_style_text_color(t0_lbl_sd, CLR_RED, 0);
         }
-    } else {
-        if (snap->sys.sd_free_mb > 0) {
-            snprintf(buf, sizeof(buf), "Error 0x%X", (unsigned int)snap->sys.sd_free_mb);
-            lv_label_set_text(t0_lbl_sd, buf);
-        } else {
-            lv_label_set_text(t0_lbl_sd, "No SD card");
-        }
-        lv_obj_set_style_text_color(t0_lbl_sd, CLR_RED, 0);
-    }
 
-    // Cập nhật trạng thái nút ghi log (Có hiệu ứng nhấp nháy REC)
-    if (snap->sys.is_logging_active) {
-        lv_label_set_text(t0_lbl_btn_log, "STOP (REC)");
-        
-        // Hiệu ứng nhấp nháy Đỏ Sáng / Đỏ Đậm mỗi 500ms
-        if ((millis() / 500) % 2 == 0) {
-            lv_obj_set_style_bg_color(t0_btn_log, CLR_RED, 0); 
-        } else {
-            lv_obj_set_style_bg_color(t0_btn_log, lv_color_hex(0x8B0000), 0); // Dark Red
+        // Cập nhật trạng thái nút ghi log (Chỉ cập nhật khi đổi trạng thái hoặc nhấp nháy REC)
+        static bool last_logging_state = false;
+        if (snap->sys.is_logging_active != last_logging_state) {
+            last_logging_state = snap->sys.is_logging_active;
+            if (snap->sys.is_logging_active) {
+                lv_label_set_text(t0_lbl_btn_log, "STOP (REC)");
+                lv_obj_set_style_bg_color(t0_btn_log, CLR_RED, 0);
+            } else {
+                lv_label_set_text(t0_lbl_btn_log, "START LOGGING");
+                lv_obj_set_style_bg_color(t0_btn_log, lv_color_hex(0x2A3B4C), 0);
+            }
+        } else if (snap->sys.is_logging_active) {
+            // Hiệu ứng nhấp nháy Đỏ Sáng / Đỏ Đậm mỗi 500ms khi đang REC
+            if ((millis() / 500) % 2 == 0) {
+                lv_obj_set_style_bg_color(t0_btn_log, CLR_RED, 0); 
+            } else {
+                lv_obj_set_style_bg_color(t0_btn_log, lv_color_hex(0x8B0000), 0); // Dark Red
+            }
         }
-    } else {
-        lv_label_set_text(t0_lbl_btn_log, "START LOGGING");
-        lv_obj_set_style_bg_color(t0_btn_log, CLR_BORDER, 0);
     }
 }

@@ -20,12 +20,38 @@
 #include <math.h>
 #include <lvgl.h>
 #include "lcd_bsp.h"
+#include "lcd_config.h"
 #include "ui_dashboard.h"
 #include "sd_logger.h"
 #include "esp_sleep.h"
 #include "driver/uart.h"
 
+#include <time.h>
+#include <sys/time.h>
+
 #define BTN_PWR_PIN 9
+
+// ── Chan doan reset: bien nam trong RTC RAM, song sot qua soft reset/crash ──
+RTC_NOINIT_ATTR static uint32_t s_boot_magic;
+RTC_NOINIT_ATTR static uint32_t s_boot_count;
+
+static const char *reset_reason_str(esp_reset_reason_t r) {
+    switch (r) {
+        case ESP_RST_POWERON:  return "POWERON";
+        case ESP_RST_SW:       return "SW";
+        case ESP_RST_PANIC:    return "PANIC";
+        case ESP_RST_INT_WDT:  return "INT_WDT";
+        case ESP_RST_TASK_WDT: return "TASK_WDT";
+        case ESP_RST_WDT:      return "WDT";
+        case ESP_RST_BROWNOUT: return "BROWNOUT";
+        case ESP_RST_DEEPSLEEP:return "DEEPSLEEP";
+        case ESP_RST_EXT:      return "EXT";
+#ifdef ESP_RST_USB
+        case ESP_RST_USB:      return "USB_UPLOAD";
+#endif
+        default:               return "OTHER";
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Pin Config
@@ -133,7 +159,7 @@ static void readQMI8658(float &pitch, float &roll) {
 //  Timing
 // ═══════════════════════════════════════════════════════════════════════════════
 static constexpr uint32_t SENSOR_READ_MS  = 200;  // 5Hz
-static constexpr uint32_t UI_UPDATE_MS    = 250;  // 4Hz
+static constexpr uint32_t UI_UPDATE_MS    = 500;  // 2Hz (on dinh bus, khong giat lag)
 static constexpr uint32_t SERIAL_PRINT_MS = 2000;
 static constexpr uint32_t GPS_TIMEOUT_MS  = 12000;
 static constexpr uint32_t I2C_RETRY_EVERY = 10;
@@ -248,6 +274,26 @@ static void readSensors() {
             g_snap.gps.minute = gpsParser.time.minute();
             g_snap.gps.second = gpsParser.time.second();
         }
+        
+        static bool time_synced = false;
+        if (!time_synced && g_snap.gps.date_valid && g_snap.gps.time_valid && g_snap.gps.year >= 2023) {
+            struct tm t = {};
+            t.tm_year = g_snap.gps.year - 1900;
+            t.tm_mon  = g_snap.gps.month - 1;
+            t.tm_mday = g_snap.gps.day;
+            t.tm_hour = g_snap.gps.hour;
+            t.tm_min  = g_snap.gps.minute;
+            t.tm_sec  = g_snap.gps.second;
+            t.tm_isdst = 0;
+            
+            time_t epoch = mktime(&t);
+            if (epoch != -1) {
+                struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+                settimeofday(&tv, NULL);
+                time_synced = true;
+                Serial.println("[RTC] Dong ho he thong da duoc dong bo voi GPS (UTC).");
+            }
+        }
 
         // ── BMP580 ────────────────────────────────────────────────────────────────
         if (bmpOk && bmp.performReading()) {
@@ -358,6 +404,17 @@ void setup() {
     Serial.setTxTimeoutMs(0); // FIX: Tranh treo khi rut cap USB CDC!
     delay(2000);
     tBoot = millis();
+
+    // --- Chan doan reset ---
+    esp_reset_reason_t rr = esp_reset_reason();
+    if (rr == ESP_RST_POWERON || s_boot_magic != 0xB007CAFE) {
+        s_boot_magic = 0xB007CAFE;
+        s_boot_count = 0;
+    }
+    s_boot_count++;
+    g_snap.sys.boot_count   = s_boot_count;
+    g_snap.sys.reset_reason = reset_reason_str(rr);
+    Serial.printf("[SYS] Boot #%lu, reset reason: %s\n", (unsigned long)s_boot_count, g_snap.sys.reset_reason);
     
     // --- Power Button ---
     pinMode(BTN_PWR_PIN, INPUT_PULLUP);
@@ -418,7 +475,10 @@ void setup() {
     Serial.flush();
 
     // ── MicroSD Logger (SPI2, CS=GPIO15) ──────────────────────────────────────
-    sd_logger_init(&g_snap);
+    if (example_lvgl_lock(-1)) {
+        sd_logger_init(&g_snap);
+        example_lvgl_unlock();
+    }
     Serial.flush();
 
     tLastSensor = millis();
@@ -434,151 +494,95 @@ void loop() {
     static uint32_t lpt=0;
     if(now-lpt>1000){ lpt=now; Serial.println("[DEBUG] Loop is running!"); }
 
-    // Khai báo tĩnh các biến quản lý trạng thái ngủ
-    static uint32_t lastActivityTime = 0;
-    static bool     isScreenOn       = true;
-    static float    lastPitch = 0.0f, lastRoll = 0.0f;
-    static const uint32_t SCREEN_TIMEOUT_MS = 20000; // 20s tắt màn hình
+    // ── Quản lý tắt/bật màn hình (Mặc định LUÔN SÁNG, chỉ tắt khi bấm nút BOOT) ──
+    static bool isScreenOn = true;
+    static float lastPitch = 0.0f, lastRoll = 0.0f;
 
-    // ── 1. Đánh thức khi chạm màn hình ──────────────────────────────────────
-    static uint32_t last_inact_check = 0;
-    if (now - last_inact_check >= 100) {
-        last_inact_check = now;
-        if (example_lvgl_lock(-1)) {
-            if (lv_disp_get_inactive_time(NULL) < 100) {
-                lastActivityTime = now;
-            }
-            example_lvgl_unlock();
-        }
-    }
+    // ── 1. Nút BOOT (GPIO9): Nhấn giữ > 1200ms để bật/tắt màn hình (Chống nhiễu tuyệt đối) ──
+    static uint32_t btn_press_start = 0;
+    static bool btn_handled = false;
+    bool btn_down = (digitalRead(BTN_PWR_PIN) == LOW);
 
-    // ── 2. Đánh thức khi có rung lắc (Wake-on-motion) ───────────────────────
-    if (g_snap.imu.valid) {
-        if (isScreenOn) {
-            if (abs(g_snap.imu.pitch_deg - lastPitch) > 15.0f || 
-                abs(g_snap.imu.roll_deg - lastRoll) > 15.0f) {
-                lastActivityTime = now; 
-            }
-        }
-        lastPitch = g_snap.imu.pitch_deg;
-        lastRoll  = g_snap.imu.roll_deg;
-    }
-    
-    // ── 2.5 Danh thuc khi nhan nut BOOT (GPIO9) (CO DEBOUNCE CHONG NHIEU) ──
-    static bool last_reading = digitalRead(BTN_PWR_PIN);
-    static bool stable_btn_state = last_reading;
-    static uint32_t last_debounce_time = 0;
-    
-    bool reading = digitalRead(BTN_PWR_PIN);
-    
-    if (reading != last_reading) {
-        last_debounce_time = now; // Reset timer neu co nhieu
-    }
-    
-    if ((now - last_debounce_time) > 50) { // 50ms on dinh
-        if (reading != stable_btn_state) {
-            stable_btn_state = reading;
-            
-            if (stable_btn_state == LOW) { // Phat hien canh xuong an toan
-                Serial.println("[DEBUG] Nhan dien nut BOOT an toan (co debounce)!");
+    if (btn_down) {
+        if (btn_press_start == 0) {
+            btn_press_start = now;
+        } else if (!btn_handled && (now - btn_press_start >= 1200)) {
+            btn_handled = true;
+            if (example_lvgl_lock(-1)) {
+                isScreenOn = !isScreenOn;
+                set_amoled_backlight(isScreenOn ? 180 : 0);
                 if (isScreenOn) {
-                    lastActivityTime = now - SCREEN_TIMEOUT_MS - 1000; 
-                } else {
-                    lastActivityTime = now;
+                    lv_disp_trig_activity(NULL);
+                }
+                example_lvgl_unlock();
+                Serial.printf("[PWR] Giữ nút BOOT > 1200ms -> Màn hình: %s\n", isScreenOn ? "BAT" : "TAT");
+            }
+        }
+    } else {
+        btn_press_start = 0;
+        btn_handled = false;
+    }
+
+    // ── 2. Khi màn hình đang tắt: Chạm vào màn hình hoặc chuyển động để bật lại ──
+    if (!isScreenOn) {
+        static uint32_t last_touch_wake_check = 0;
+        if (now - last_touch_wake_check >= 100) {
+            last_touch_wake_check = now;
+            if (example_lvgl_lock(-1)) {
+                uint32_t inactive_ms = lv_disp_get_inactive_time(NULL);
+                if (inactive_ms < 150) {
+                    isScreenOn = true;
+                    set_amoled_backlight(180);
+                    Serial.println(F("[PWR] Chạm màn hình -> Bật sáng lại!"));
+                }
+                example_lvgl_unlock();
+            }
+        }
+
+        // Lắc tay / Chuyển động (Wake-on-motion)
+        if (g_snap.imu.valid) {
+            if (abs(g_snap.imu.pitch_deg - lastPitch) > 25.0f || 
+                abs(g_snap.imu.roll_deg - lastRoll) > 25.0f) {
+                if (example_lvgl_lock(-1)) {
+                    isScreenOn = true;
+                    set_amoled_backlight(180);
+                    lv_disp_trig_activity(NULL);
+                    example_lvgl_unlock();
+                    Serial.println(F("[PWR] Chuyển động mạnh -> Bật sáng màn hình!"));
                 }
             }
+            lastPitch = g_snap.imu.pitch_deg;
+            lastRoll  = g_snap.imu.roll_deg;
         }
-    }
-    last_reading = reading;
-
-    // ── 3. State Machine: Sleep / Wake ──────────────────────────────────────
-    if (isScreenOn && (now - lastActivityTime > SCREEN_TIMEOUT_MS)) {
-        isScreenOn = false;
-        Serial.println("[PWR] Tắt màn hình, giảm xung CPU xuống 80MHz tiết kiệm pin.");
-        
-        set_amoled_backlight(0);
-        
-        if (!g_snap.sys.is_logging_active) {
-            Serial.println("[PWR] Khong ghi log -> LIGHT SLEEP (Tiet kiem pin, an BOOT de thuc day)!");
-        } else {
-            Serial.println("[PWR] Dang ghi log -> LIGHT SLEEP (Duy tri doc GPS)!");
-        }
-        
-    } 
-    else if (!isScreenOn && (now - lastActivityTime <= SCREEN_TIMEOUT_MS)) {
-        isScreenOn = true;
-        Serial.println("[PWR] Đánh thức! Bật lại màn hình, nâng CPU 160MHz.");
-        
-        // setCpuFrequencyMhz(160); da bi loai bo
-        set_amoled_backlight(255); // Bat lai AMOLED
-        
-        if (example_lvgl_lock(-1)) {
-            lv_disp_trig_activity(NULL);
-            example_lvgl_unlock();
-        }
-    }
-
-    // ── 4. Tiết kiệm tối đa khi đang ngủ ────────────────────────────────────
-    if (!isScreenOn) {
-        // Khi man hinh tat va is_logging_active == true
-        while (gpsSerial.available()) gpsParser.encode((char)gpsSerial.read());
-        
-        static uint32_t tLastSdLog = 0;
-        if (now - tLastSdLog >= 1000) {
-            tLastSdLog = now;
-            sd_logger_log(&g_snap);
-        }
-        
-        // LIGHT SLEEP CHUAN ESP-IDF:
-        // Cho phep danh thuc bang UART (khi co the NMEA bay vao)
-        uart_set_wakeup_threshold(UART_NUM_1, 3);
-        esp_sleep_enable_uart_wakeup(UART_NUM_1);
-        
-        // Cau hinh danh thuc bang nut bam ngay truoc khi ngu
-        gpio_wakeup_enable((gpio_num_t)BTN_PWR_PIN, GPIO_INTR_LOW_LEVEL);
-        esp_sleep_enable_gpio_wakeup();
-
-        // Ngu nong khoang 100ms de tiet kiem pin, hoac bi thuc day boi UART som hon
-        esp_sleep_enable_timer_wakeup(100000); 
-        esp_light_sleep_start();
-        
-        // Vua tinh day, tat chuc nang wakeup tren chan nay de digitalRead hoat dong binh thuong
-        gpio_wakeup_disable((gpio_num_t)BTN_PWR_PIN);
-        // BAT BUOC phai goi lai pinMode vi gpio_wakeup_enable da route chan nay sang RTC, lam digitalRead bi mu!
-        pinMode(BTN_PWR_PIN, INPUT_PULLUP);
-        
-        return; // Thoat som, khong update UI
     }
 
     // ── Đọc ADC Pin (Mỗi 2 giây) ─────────────────────────────────────────────
     static uint32_t lastBat = 0;
     if (now - lastBat >= 2000) {
         lastBat = now;
-        analogReadResolution(12); // Đảm bảo 12-bit
-        int adc = analogRead(0);
-        float volts = (adc / 4095.0f) * 3.3f * 2.0f;
+        uint32_t mv = analogReadMilliVolts(0);
+        float volts = (mv * 2.0f) / 1000.0f;
         g_snap.sys.battery_v = volts;
         
-        // Map Volts -> % (Xấp xỉ cho Li-Po 3.7V)
         if (volts >= 4.15f) g_snap.sys.battery_pct = 100;
         else if (volts <= 3.30f) g_snap.sys.battery_pct = 0;
         else g_snap.sys.battery_pct = (uint8_t)(((volts - 3.30f) / (4.15f - 3.30f)) * 100.0f);
     }
 
-    // ── 1. Feed GPS parser ────────────────────────────────────────────────────
+    // ── 4. Đọc dữ liệu GPS NMEA liên tục ─────────────────────────────────────
     while (gpsSerial.available()) {
         if (gpsParser.encode((char)gpsSerial.read())) {
             tLastGps = now;
         }
     }
 
-    // ── 2. GPS timeout warn ───────────────────────────────────────────────────
+    // Cảnh báo GPS timeout
     if (now - tLastGps > GPS_TIMEOUT_MS) {
         Serial.println(F("[GPS] ⚠️ Không nhận dữ liệu > 12s!"));
         tLastGps = now;
     }
 
-    // ── 3. Đọc sensor mỗi 500ms ──────────────────────────────────────────────
+    // ── 5. Đọc sensor mỗi 500ms ──────────────────────────────────────────────
     if (now - tLastSensor >= SENSOR_READ_MS) {
         tLastSensor = now;
         if (example_lvgl_lock(-1)) {
@@ -587,8 +591,8 @@ void loop() {
         }
     }
 
-    // ── 4. Update LVGL UI ────────────────────────────────────────────────────
-    if (now - tLastUiUpd >= UI_UPDATE_MS) {
+    // ── 6. Update LVGL UI mỗi 1000ms (chỉ khi màn hình đang bật) ─────────────
+    if (isScreenOn && (now - tLastUiUpd >= UI_UPDATE_MS)) {
         tLastUiUpd = now;
         if (example_lvgl_lock(-1)) {
             ui_dashboard_update(&g_snap);
@@ -596,7 +600,7 @@ void loop() {
         }
     }
 
-    // ── 5. Serial debug mỗi 2s ───────────────────────────────────────────────
+    // ── 7. Serial debug mỗi 2s ───────────────────────────────────────────────
     if (now - tLastPrint >= SERIAL_PRINT_MS) {
         tLastPrint = now;
         if (printCount++ % I2C_RETRY_EVERY == 0) {
@@ -609,16 +613,17 @@ void loop() {
         printSerial();
     }
 
-    // ── 6. Ghi log thẻ nhớ định kỳ (mỗi 1 giây) ──────────────────────────────
+    // ── 8. Ghi log thẻ nhớ định kỳ (mỗi 1 giây) ──────────────────────────────
+    // BẮT BUỘC khoá LVGL để không xung đột bus SPI2 với màn hình AMOLED
     static uint32_t tLastSdLog = 0;
     if (now - tLastSdLog >= 1000) {
         tLastSdLog = now;
-        if (example_lvgl_lock(-1)) {
+        if (sd_logger_is_ok() && example_lvgl_lock(-1)) {
             sd_logger_log(&g_snap);
             example_lvgl_unlock();
         }
     }
 
-    // ── 7. Yield cho LVGL FreeRTOS task ──────────────────────────────────────
+    // ── 9. Nhường CPU cho FreeRTOS task khác ─────────────────────────────────
     delay(5);
 }

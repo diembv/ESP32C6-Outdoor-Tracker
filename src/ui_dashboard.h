@@ -89,6 +89,8 @@ struct SysData {
     bool     sd_ok;         // SD OK
     uint32_t sd_free_mb;    // SD free MB
     bool     is_logging_active; // Trạng thái đang ghi log
+    uint32_t boot_count;        // So lan khoi dong (giu qua soft reset)
+    const char *reset_reason;   // Ly do reset lan truoc (PANIC, TASK_WDT, BROWNOUT...)
 };
 
 struct SensorSnapshot {

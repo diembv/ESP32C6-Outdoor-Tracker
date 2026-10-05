@@ -74,16 +74,18 @@ bool sd_logger_init(SensorSnapshot *snap) {
     slot_config.host_id   = SD_SPI_HOST;
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.flags &= ~SDMMC_HOST_FLAG_DEINIT_ARG; // Khong deinit bus
-    host.slot = SD_SPI_HOST;
     host.max_freq_khz = 4000; // 4MHz
 
     esp_err_t ret = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &slot_config, &mount_config, &s_card);
     if (ret != ESP_OK) {
         Serial.printf("[SD] Mount that bai (ma loi: 0x%x).\n", ret);
         if (snap) {
-            snap->sys.sd_free_mb = (uint32_t)ret; 
+            snap->sys.sd_present = false;
+            snap->sys.sd_ok = false;
+            snap->sys.sd_free_mb = 0; // Để UI hiển thị "No SD card" thân thiện
         }
+        pinMode(15, OUTPUT);
+        digitalWrite(15, HIGH);
         return false;
     }
 
@@ -148,14 +150,21 @@ void sd_logger_toggle(SensorSnapshot *snap) {
         }
 
         // Ghi GPX Header
-        char header[256];
+        char meta_time[64] = "";
+        if (snap->gps.date_valid && snap->gps.time_valid) {
+            snprintf(meta_time, sizeof(meta_time), "  <metadata><time>%04u-%02u-%02uT%02u:%02u:%02uZ</time></metadata>\n",
+                     snap->gps.year, snap->gps.month, snap->gps.day,
+                     snap->gps.hour, snap->gps.minute, snap->gps.second);
+        }
+        char header[384];
         snprintf(header, sizeof(header), 
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-            "<gpx version=\"1.1\" creator=\"ESP32-C6 Outdoor Tracker\">\n"
+            "<gpx version=\"1.1\" creator=\"ESP32-C6 Outdoor Tracker\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n"
+            "%s"
             "  <trk>\n"
             "    <name>Track %04u%02u%02u</name>\n"
             "    <trkseg>\n", 
-            snap->gps.year, snap->gps.month, snap->gps.day);
+            meta_time, snap->gps.year, snap->gps.month, snap->gps.day);
             
         fwrite(header, 1, strlen(header), s_log_file);
         fflush(s_log_file);
