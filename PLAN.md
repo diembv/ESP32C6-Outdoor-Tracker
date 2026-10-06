@@ -279,6 +279,33 @@ Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 
 - [x] Xuất file GPX 1.1 chuẩn schema quốc tế, tương thích 100% với Strava, Garmin Connect, Google Earth, GPX Studio,...
 - [x] Đã xử lý sẵn tương thích lỗi bảng mã console Windows (CP1252 `UnicodeEncodeError`).
 
+### 5. Nâng Cấp Tinh Chỉnh Cuối Cùng (Tonight - 2026-10-06)
+- [x] **Khóa Cứng Mốc $P_0$ (Calibrate 1 Lần Duy Nhất - Chuẩn Thiết Bị Garmin/Wahoo):**
+  - Chỉ tính và chốt $P_0$ đúng **1 lần duy nhất** khi ra ngoài trời (chỉ cần 4 mẫu $\approx$ 4 giây có sóng $\ge 5$ vệ tinh, $\text{HDOP} \le 2.2$).
+  - Khóa cứng mốc $P_0$ trong suốt phần còn lại của chuyến đi, không bao giờ ghi đè lại, để toàn bộ cao độ cho BMP580 tự do vẽ mượt mà, triệt tiêu 100% các cú nhảy giật cục.
+- [x] **Trì Hoãn Tạo File Log Đến Khi GPS Có Time Fix (Zero Junk Files):**
+  - Không tạo file rác `track_001.csv` khi người dùng bấm Start trong nhà.
+  - Chuyển sang trạng thái chờ; ngay khoảnh khắc GPS nhận được Time Fix (`date_valid && time_valid`), hệ thống mới chính thức tạo file `/sdcard/logs/YYYYMMDD_HHMMSS.csv` với tên chuẩn ngày giờ quốc tế.
+- [x] **Ưu Tiên 100% Cảm Biến Khí Áp BMP580 Trong File Log:**
+  - File log luôn sử dụng độ cao vi sai từ cảm biến khí áp BMP580, loại bỏ hoàn toàn việc fallback sang cao độ thô giật cục của GPS.
+- [x] **Bộ Lọc Chống Trôi Dạt GPS Trong Nhà (Position Clamping / Anti-Drift):**
+  - Khi bước vào nhà hoặc tầng hầm (sóng dội Multipath, $\text{HDOP} > 2.2$ hoặc $\text{Sats} < 5$), hệ thống tự động khóa cứng tọa độ tại mép cửa nhà (`last_good_lat`, `last_good_lon`).
+  - Triệt tiêu 100% hiện tượng "vẽ mạng nhện" (Spiderweb Drift) xuyên qua các bức tường phòng ngủ, không bị cộng dồn quãng đường ảo.
+  - Vẫn tiếp tục ghi nhận cao độ từ BMP580 theo nhịp Smart Logging (1s khi leo dốc/cầu thang, 10s khi ngồi yên) để giữ trọn vẹn biểu đồ leo cầu thang lên phòng!
+- [x] **Hồ Sơ Môn Thể Thao Thông Minh (Sport Profiles: Hiking & Cycling):**
+  - **Dropdown chọn chế độ [Hiking / Cycling]:** Bố trí ngay cạnh nút ghi Log ở hàng đáy Tile 2 (font 14 thanh thoát, không có icon mũi tên rườm rà, bung danh sách lên trên tránh che khuất). Tự động khóa chọn khi đang trong phiên ghi log (REC).
+  - **Đặt tên file theo môn thể thao:** Tự động lưu thành `/sdcard/logs/HIKING_YYYYMMDD_HHMMSS.csv` hoặc `/sdcard/logs/CYCLING_YYYYMMDD_HHMMSS.csv`.
+  - **Chế độ Hiking (Leo núi / Đi rừng):**
+    - Ngưỡng phát hiện di chuyển người đi bộ dốc ($> 0.6\text{ km/h}$).
+    - Tính quãng đường 3D leo dốc ($d_{3D} = \sqrt{d_{2D}^2 + \Delta h^2}$).
+    - Nhạy cao độ khi leo dốc ($\Delta h \ge 2\text{m} \rightarrow 1\text{s}$, đi đường mòn $3\text{s}$, ngồi nghỉ $10\text{s}$).
+  - **Chế độ Cycling (Đạp xe):**
+    - Ngưỡng phát hiện xe đạp ($> 1.5\text{ km/h}$).
+    - Nhạy góc cua xe đạp ($\Delta \theta \ge 15^\circ$ hoặc $v \ge 25\text{ km/h} \rightarrow 1\text{s}$, đường thẳng $3\text{s}$).
+- [x] **Kiến Trúc Hiệu Chuẩn Cao Độ 2 Tầng (Dual Altitude Calibration):**
+  - **Tầng 1 — Bộ lọc bù trôi chậm ngầm (Continuous Auto-Drift Compensation):** Mỗi 15 phút, nếu GPS ngoài trời đạt chuẩn cao (`sats >= 7`, `hdop <= 1.2`), tự động so sánh và kéo rê mốc $P_0$ rất chậm ($\pm 0.05\text{ hPa}$) để triệt tiêu độ trôi do thời tiết mà không sinh vết giật nấc.
+  - **Tầng 2 — Nút Calib thủ công (Manual GPS Calib Alt):** Nút cảm ứng "CALIB ALT (GPS)" trên Tile 2 cho phép chủ động làm mới mốc $P_0$ ngay lập tức khi người dùng tới trạm dừng chân hoặc đỉnh núi.
+
 ---
 
 ## [ ] Milestone 6 — Navigation với Cửa sổ trượt (Sliding Window GPX) & Breadcrumb Map

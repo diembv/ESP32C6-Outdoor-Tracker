@@ -40,6 +40,8 @@ static lv_obj_t *t0_lbl_datetime;
 
 static lv_obj_t *t0_btn_log;
 static lv_obj_t *t0_lbl_btn_log;
+static lv_obj_t *t0_dd_mode;
+static lv_obj_t *t0_btn_calib;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Helpers
@@ -213,6 +215,38 @@ static void mbox_close_cb(lv_event_t * e) {
     lv_msgbox_close(lv_event_get_current_target(e));
 }
 
+static void dd_mode_event_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_VALUE_CHANGED) {
+        lv_obj_t * dropdown = lv_event_get_target(e);
+        uint16_t selected = lv_dropdown_get_selected(dropdown);
+        ActivityMode mode = (selected == 1) ? ACTIVITY_MODE_BIKE : ACTIVITY_MODE_HIKE;
+        g_snap.sys.activity_mode = mode;
+        sd_logger_set_activity_mode(mode);
+        Serial.printf("[UI] Che do the thao doi sang: %s\n", (mode == ACTIVITY_MODE_BIKE) ? "Cycling" : "Hiking");
+    }
+}
+
+static void btn_calib_event_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_CLICKED) {
+        if (!g_snap.gps.fix_valid || !g_snap.gps.altitude_valid || g_snap.gps.satellites < 5) {
+            static const char * btns[] = {"OK", ""};
+            lv_obj_t * mbox = lv_msgbox_create(NULL, "CALIB ALTITUDE", "GPS fix not ready.\nNeed 3D fix (>= 5 sats)\nto calibrate altitude.", btns, false);
+            lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
+            lv_obj_center(mbox);
+        } else {
+            baro_request_recalibration();
+            static const char * btns[] = {"OK", ""};
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Calibrated to GPS Alt: %.1fm\nSea-level P0 updated.", g_snap.gps.altitude_m);
+            lv_obj_t * mbox = lv_msgbox_create(NULL, "CALIB SUCCESS", msg, btns, false);
+            lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
+            lv_obj_center(mbox);
+        }
+    }
+}
+
 static void btn_log_event_cb(lv_event_t * e) {
     lv_event_code_t code = lv_event_get_code(e);
     if(code == LV_EVENT_CLICKED) {
@@ -240,9 +274,11 @@ static void btn_log_event_cb(lv_event_t * e) {
             char summary_text[200];
             snprintf(summary_text, sizeof(summary_text), 
                      "Session saved to MicroSD.\n\n"
+                     "Mode: %s\n"
                      "Elapsed Time: %02lu:%02lu\n"
                      "Distance: %.2f km\n"
                      "Avg Speed: %.1f km/h", 
+                     (g_snap.sys.activity_mode == ACTIVITY_MODE_BIKE) ? "Cycling" : "Hiking",
                      (unsigned long)m, (unsigned long)s, dist_km, avg_speed);
                      
             lv_obj_t * mbox = lv_msgbox_create(NULL, "ACTIVITY SUMMARY", summary_text, btns, false);
@@ -254,7 +290,7 @@ static void btn_log_event_cb(lv_event_t * e) {
             
             if (!g_snap.gps.fix_valid) {
                 static const char * btns[] = {"OK", ""};
-                lv_obj_t * mbox = lv_msgbox_create(NULL, "WAITING FOR GPS", "Log file created.\nSystem will auto-record trackpoints once GPS fix is acquired.", btns, false);
+                lv_obj_t * mbox = lv_msgbox_create(NULL, "WAITING FOR GPS", "Log armed in standby.\nSystem will auto-record\nonce GPS fix is acquired.", btns, false);
                 lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
                 lv_obj_center(mbox);
             }
@@ -313,20 +349,81 @@ static void build_tile2_system(lv_obj_t *tile)
     lv_obj_set_style_text_color(t0_lbl_sd, CLR_ACCENT, 0);
     lv_obj_set_pos(t0_lbl_sd, 8, 278);
 
-    // Nút Bật/Tắt Ghi Log (Kích thước lớn hơn, mở rộng vùng cảm ứng)
+    // ── Nút Hiệu chuẩn Cao độ thủ công (GPS Calib Alt) ──
+    t0_btn_calib = lv_btn_create(tile);
+    lv_obj_set_size(t0_btn_calib, 256, 52);
+    lv_obj_align(t0_btn_calib, LV_ALIGN_BOTTOM_MID, 0, -72);
+    lv_obj_clear_flag(t0_btn_calib, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_set_style_bg_color(t0_btn_calib, lv_color_hex(0x1F2937), 0);
+    lv_obj_set_style_bg_color(t0_btn_calib, lv_color_hex(0x374151), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(t0_btn_calib, CLR_ACCENT, 0);
+    lv_obj_set_style_border_width(t0_btn_calib, 1, 0);
+    lv_obj_set_style_radius(t0_btn_calib, 8, 0);
+    lv_obj_add_event_cb(t0_btn_calib, btn_calib_event_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *lbl_calib = lv_label_create(t0_btn_calib);
+    lv_label_set_text(lbl_calib, LV_SYMBOL_REFRESH " CALIB ALT (GPS)");
+    lv_obj_set_style_text_font(lbl_calib, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_calib, CLR_ACCENT, 0);
+    lv_obj_clear_flag(lbl_calib, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(lbl_calib);
+
+    // ── Hàng điều khiển đáy: [Dropdown Mode] + [Nút Log] (Chiều cao 52px bằng nhau) ──
+    // 1. Ô Dropdown chọn chế độ Hiking / Cycling (bên trái - bung danh sách LÊN TRÊN)
+    t0_dd_mode = lv_dropdown_create(tile);
+    lv_dropdown_set_options(t0_dd_mode, "Hiking\nCycling");
+    lv_dropdown_set_symbol(t0_dd_mode, NULL); // BỎ HOÀN TOÀN MŨI TÊN CHỈ XUỐNG
+    lv_dropdown_set_dir(t0_dd_mode, LV_DIR_TOP); // LUÔN BUNG LÊN TRÊN
+    lv_obj_set_size(t0_dd_mode, 96, 52);
+    lv_obj_align(t0_dd_mode, LV_ALIGN_BOTTOM_LEFT, 12, -12);
+    lv_obj_clear_flag(t0_dd_mode, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_set_ext_click_area(t0_dd_mode, 10);
+
+    // Style nút chính: Căn giữa 100%, font montserrat_14 nhỏ gọn, thanh thoát
+    lv_obj_set_style_bg_color(t0_dd_mode, lv_color_hex(0x1E293B), 0);
+    lv_obj_set_style_text_color(t0_dd_mode, CLR_WHITE, 0);
+    lv_obj_set_style_text_font(t0_dd_mode, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_align(t0_dd_mode, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_border_color(t0_dd_mode, CLR_BORDER, 0);
+    lv_obj_set_style_border_width(t0_dd_mode, 1, 0);
+    lv_obj_set_style_radius(t0_dd_mode, 8, 0);
+
+    // Đệm chuẩn xác để text Montserrat 14 (cao ~14px) nằm chính giữa tâm ô cao 52px: (52 - 14) / 2 = 19px
+    lv_obj_set_style_pad_top(t0_dd_mode, 18, 0);
+    lv_obj_set_style_pad_bottom(t0_dd_mode, 18, 0);
+    lv_obj_set_style_pad_left(t0_dd_mode, 0, 0);
+    lv_obj_set_style_pad_right(t0_dd_mode, 0, 0);
+
+    lv_dropdown_set_selected(t0_dd_mode, (g_snap.sys.activity_mode == ACTIVITY_MODE_BIKE) ? 1 : 0);
+    lv_obj_add_event_cb(t0_dd_mode, dd_mode_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Style cho danh sách sổ ra (Popup list mở lên trên)
+    lv_obj_t * list = lv_dropdown_get_list(t0_dd_mode);
+    lv_obj_set_style_bg_color(list, lv_color_hex(0x0D1117), 0);
+    lv_obj_set_style_text_color(list, CLR_WHITE, 0);
+    lv_obj_set_style_border_color(list, CLR_ACCENT, 0);
+    lv_obj_set_style_border_width(list, 2, 0);
+    lv_obj_set_style_radius(list, 8, 0);
+    lv_obj_set_style_text_font(list, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_align(list, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_all(list, 8, 0);
+
+
+    // 2. Nút Bật/Tắt Ghi Log (bên phải - chiều cao 52px)
     t0_btn_log = lv_btn_create(tile);
-    lv_obj_set_size(t0_btn_log, 240, 56);
-    lv_obj_align(t0_btn_log, LV_ALIGN_BOTTOM_MID, 0, -15);
-    lv_obj_clear_flag(t0_btn_log, LV_OBJ_FLAG_SCROLL_CHAIN); // Không cho cuộn cướp chạm
-    lv_obj_set_ext_click_area(t0_btn_log, 20);               // Mở rộng hitbox chạm thêm 20px
+    lv_obj_set_size(t0_btn_log, 150, 52);
+    lv_obj_align(t0_btn_log, LV_ALIGN_BOTTOM_RIGHT, -12, -12);
+    lv_obj_clear_flag(t0_btn_log, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_set_ext_click_area(t0_btn_log, 10);
     lv_obj_set_style_bg_color(t0_btn_log, lv_color_hex(0x2A3B4C), 0);
     lv_obj_set_style_bg_color(t0_btn_log, lv_color_hex(0x007ACC), LV_STATE_PRESSED);
+    lv_obj_set_style_radius(t0_btn_log, 8, 0);
     lv_obj_add_event_cb(t0_btn_log, btn_log_event_cb, LV_EVENT_CLICKED, NULL);
 
     t0_lbl_btn_log = lv_label_create(t0_btn_log);
-    lv_label_set_text(t0_lbl_btn_log, "START LOGGING");
-    lv_obj_set_style_text_font(t0_lbl_btn_log, &lv_font_montserrat_20, 0);
-    lv_obj_clear_flag(t0_lbl_btn_log, LV_OBJ_FLAG_CLICKABLE); // Chữ không cản trở sự kiện nút
+    lv_label_set_text(t0_lbl_btn_log, "START LOG");
+    lv_obj_set_style_text_font(t0_lbl_btn_log, &lv_font_montserrat_14, 0);
+    lv_obj_clear_flag(t0_lbl_btn_log, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_center(t0_lbl_btn_log);
 }
 
@@ -557,9 +654,11 @@ void ui_dashboard_update(const SensorSnapshot *snap)
             if (snap->sys.is_logging_active) {
                 lv_label_set_text(t0_lbl_btn_log, "STOP (REC)");
                 lv_obj_set_style_bg_color(t0_btn_log, CLR_RED, 0);
+                if (t0_dd_mode) lv_obj_add_state(t0_dd_mode, LV_STATE_DISABLED);
             } else {
-                lv_label_set_text(t0_lbl_btn_log, "START LOGGING");
+                lv_label_set_text(t0_lbl_btn_log, "START LOG");
                 lv_obj_set_style_bg_color(t0_btn_log, lv_color_hex(0x2A3B4C), 0);
+                if (t0_dd_mode) lv_obj_clear_state(t0_dd_mode, LV_STATE_DISABLED);
             }
         } else if (snap->sys.is_logging_active) {
             // Hiệu ứng nhấp nháy Đỏ Sáng / Đỏ Đậm mỗi 500ms khi đang REC

@@ -37,6 +37,15 @@ static double s_last_lat = 0;
 static double s_last_lon = 0;
 static uint32_t s_session_start_ms = 0;
 static uint32_t s_points_logged = 0;
+static ActivityMode s_activity_mode = ACTIVITY_MODE_HIKE;
+
+void sd_logger_set_activity_mode(ActivityMode mode) {
+    s_activity_mode = mode;
+}
+
+ActivityMode sd_logger_get_activity_mode(void) {
+    return s_activity_mode;
+}
 
 // Chuyển đổi GPS Date/Time UTC sang Unix Epoch Timestamp (giây từ 1970-01-01 00:00:00 UTC)
 static uint32_t to_epoch_seconds(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t min, uint8_t sec) {
@@ -115,6 +124,7 @@ bool sd_logger_init(SensorSnapshot *snap) {
         snap->sys.sd_present = true;
         snap->sys.sd_ok = true;
         snap->sys.sd_free_mb = capacity_mb; 
+        snap->sys.activity_mode = s_activity_mode;
     }
 
     struct stat st;
@@ -137,37 +147,12 @@ void sd_logger_toggle(SensorSnapshot *snap) {
             fclose(s_log_file);
             s_log_file = NULL;
             Serial.println("[SD] Da DUNG ghi log va luu file CSV an toan.");
+        } else {
+            Serial.println("[SD] Da DUNG che do cho ghi log (Chua co file nao duoc tao).");
         }
     } else {
-        // BAT DAU GHI -> Tao file CSV va Ghi Header
-        if (snap->gps.date_valid && snap->gps.time_valid) {
-            snprintf(s_filepath, sizeof(s_filepath), SD_LOG_DIR "/%04u%02u%02u_%02u%02u%02u.csv",
-                     snap->gps.year, snap->gps.month, snap->gps.day,
-                     snap->gps.hour, snap->gps.minute, snap->gps.second);
-        } else {
-            int file_idx = 1;
-            while (file_idx < 1000) {
-                snprintf(s_filepath, sizeof(s_filepath), SD_LOG_DIR "/track_%03d.csv", file_idx);
-                struct stat st;
-                if (stat(s_filepath, &st) != 0) {
-                    break;
-                }
-                file_idx++;
-            }
-        }
-
-        s_log_file = fopen(s_filepath, "w");
-        if (!s_log_file) {
-            Serial.printf("[SD] Loi tao file CSV moi: %s\n", s_filepath);
-            return;
-        }
-
-        // Ghi CSV Header siêu gọn: "ts,lat,lon,alt\n"
-        const char *header = "ts,lat,lon,alt\n";
-        fwrite(header, 1, strlen(header), s_log_file);
-        fflush(s_log_file);
-        fsync(fileno(s_log_file));
-
+        // BAT DAU GHI LOG
+        snap->sys.is_logging_active = true;
         s_log_buffer_len = 0;
         s_points_logged = 0;
         s_last_flush_time = millis();
@@ -177,26 +162,76 @@ void sd_logger_toggle(SensorSnapshot *snap) {
         s_last_lon = 0;
         s_session_start_ms = millis();
 
-        Serial.printf("[SD] BAT DAU ghi log CSV (Compact) vao: %s\n", s_filepath);
-        snap->sys.is_logging_active = true;
+        // CHỈ MỞ FILE KHI ĐÃ CÓ TIME FIX TỪ GPS (tránh sinh file rác track_001.csv)
+        if (snap->gps.date_valid && snap->gps.time_valid) {
+            const char *mode_prefix = (s_activity_mode == ACTIVITY_MODE_BIKE) ? "CYCLING" : "HIKING";
+            snprintf(s_filepath, sizeof(s_filepath), SD_LOG_DIR "/%s_%04u%02u%02u_%02u%02u%02u.csv",
+                     mode_prefix,
+                     snap->gps.year, snap->gps.month, snap->gps.day,
+                     snap->gps.hour, snap->gps.minute, snap->gps.second);
+
+            s_log_file = fopen(s_filepath, "w");
+            if (s_log_file) {
+                const char *header = "ts,lat,lon,alt\n";
+                fwrite(header, 1, strlen(header), s_log_file);
+                fflush(s_log_file);
+                fsync(fileno(s_log_file));
+                Serial.printf("[SD] BAT DAU ghi log CSV (%s): %s\n", mode_prefix, s_filepath);
+            } else {
+                Serial.printf("[SD] Loi tao file CSV moi: %s\n", s_filepath);
+            }
+        } else {
+            s_log_file = NULL;
+            const char *mode_prefix = (s_activity_mode == ACTIVITY_MODE_BIKE) ? "CYCLING" : "HIKING";
+            Serial.printf("[SD] Che do CHO: Cho GPS co Time Fix de tao file %s_YYYYMMDD_HHMMSS.csv...\n", mode_prefix);
+        }
     }
 }
 
 void sd_logger_log(SensorSnapshot *snap) {
-    if (!s_sd_ready || !s_log_file || !snap) return;
+    if (!s_sd_ready || !snap) return;
+    if (!snap->sys.is_logging_active) return;
 
     uint32_t now = millis();
 
     // Lưu ý: Không tự ý ngắt ghi để cho phép cấp nguồn qua USB / sạc dự phòng khi chưa gắn pin Li-Po
     static uint32_t last_bat_warn = 0;
-    if (snap->sys.is_logging_active && snap->sys.battery_v > 0.5f && snap->sys.battery_v < 3.30f) {
+    if (snap->sys.battery_v > 0.5f && snap->sys.battery_v < 3.30f) {
         if (now - last_bat_warn >= 30000) {
             last_bat_warn = now;
             Serial.printf("[SD] Dien ap nguon: %.2fV (Nguon USB hoac pin yeu)\n", snap->sys.battery_v);
         }
     }
 
-    if (!snap->sys.is_logging_active || !snap->gps.fix_valid) {
+    // NẾU CHƯA CÓ FILE (Đang chờ GPS Time Fix):
+    if (s_log_file == NULL) {
+        if (snap->gps.date_valid && snap->gps.time_valid) {
+            const char *mode_prefix = (s_activity_mode == ACTIVITY_MODE_BIKE) ? "CYCLING" : "HIKING";
+            snprintf(s_filepath, sizeof(s_filepath), SD_LOG_DIR "/%s_%04u%02u%02u_%02u%02u%02u.csv",
+                     mode_prefix,
+                     snap->gps.year, snap->gps.month, snap->gps.day,
+                     snap->gps.hour, snap->gps.minute, snap->gps.second);
+
+            s_log_file = fopen(s_filepath, "w");
+            if (s_log_file) {
+                const char *header = "ts,lat,lon,alt\n";
+                fwrite(header, 1, strlen(header), s_log_file);
+                fflush(s_log_file);
+                fsync(fileno(s_log_file));
+                s_last_flush_time = now;
+                Serial.printf("[SD] GPS da co Time Fix! TAO FILE (%s): %s\n", mode_prefix, s_filepath);
+            } else {
+                Serial.printf("[SD] Loi tao file CSV moi: %s\n", s_filepath);
+                return;
+            }
+        } else {
+            // Vẫn chưa có time fix -> tiếp tục chờ
+            return;
+        }
+    }
+
+    // Chỉ ghi trackpoint khi đã có GPS fix
+    if (!snap->gps.fix_valid) {
         // Flush buffer nếu còn data tồn đọng quá 60s
         if (s_log_buffer_len > 0 && now - s_last_flush_time >= 60000) {
             flush_buffer_to_sd();
@@ -207,16 +242,11 @@ void sd_logger_log(SensorSnapshot *snap) {
     float v = snap->gps.speed_kmh;
     float heading = snap->gps.course_deg;
 
-    // Chọn nguồn cao độ đã được hiệu chuẩn (BMP580 + GPS)
+    // Ưu tiên 100% cảm biến khí áp BMP580 để đường vẽ mượt mà,
+    // triệt tiêu hoàn toàn các cú nhảy giật cục của sóng GPS!
     bool  has_ele = false;
     float alt = 0.0f;
-    if (snap->baro.valid && snap->baro.calibrated) {
-        alt = snap->baro.altitude_m;
-        has_ele = true;
-    } else if (snap->gps.altitude_valid && snap->gps.satellites >= 4) {
-        alt = snap->gps.altitude_m;
-        has_ele = true;
-    } else if (snap->baro.valid) {
+    if (snap->baro.valid) {
         alt = snap->baro.altitude_m;
         has_ele = true;
     } else if (snap->gps.altitude_valid) {
@@ -224,11 +254,28 @@ void sd_logger_log(SensorSnapshot *snap) {
         has_ele = true;
     }
 
-    if (snap->gps.fix_valid) {
+    // ── Xử lý chống trôi dạt GPS trong nhà (Anti-Drift / Spiderweb Filter) ──
+    // Khi vào nhà / tầng hầm: HDOP tăng vọt (> 2.2) hoặc số vệ tinh < 5 do che khuất & sóng dội.
+    // Giải pháp: KHÓA CỨNG TỌA ĐỘ tại vị trí tốt cuối cùng ngoài cửa (không cho vẽ mạng nhện),
+    // nhưng VẪN TIẾP TỤC GHI CAO ĐỘ (BMP580) để theo dõi trọn vẹn việc leo cầu thang lên phòng!
+    bool gps_quality_ok = (snap->gps.hdop <= 2.2f && snap->gps.satellites >= 5);
+
+    double log_lat = s_last_lat;
+    double log_lon = s_last_lon;
+
+    if (gps_quality_ok) {
+        // Ngoài trời, sóng GPS nét -> cập nhật tọa độ thực tế
         if (s_last_lat != 0 && s_last_lon != 0) {
             float dist = TinyGPSPlus::distanceBetween(s_last_lat, s_last_lon, snap->gps.latitude, snap->gps.longitude);
             if (dist > 1.0f) {
-                s_session_distance += dist;
+                // Tính quãng đường 3D cho leo núi dốc
+                if (s_activity_mode == ACTIVITY_MODE_HIKE && has_ele && s_last_alt != 0) {
+                    float d_alt = fabsf(alt - s_last_alt);
+                    float dist_3d = sqrtf(dist * dist + d_alt * d_alt);
+                    s_session_distance += dist_3d;
+                } else {
+                    s_session_distance += dist;
+                }
                 s_last_lat = snap->gps.latitude;
                 s_last_lon = snap->gps.longitude;
             }
@@ -236,10 +283,21 @@ void sd_logger_log(SensorSnapshot *snap) {
             s_last_lat = snap->gps.latitude;
             s_last_lon = snap->gps.longitude;
         }
+        log_lat = s_last_lat;
+        log_lon = s_last_lon;
+    } else {
+        // Trong nhà, sóng GPS dội -> Khóa chặt tọa độ tại điểm tốt cuối cùng
+        if (s_last_lat == 0 && s_last_lon == 0) {
+            s_last_lat = snap->gps.latitude;
+            s_last_lon = snap->gps.longitude;
+        }
+        log_lat = s_last_lat;
+        log_lon = s_last_lon;
     }
 
-    // Theo dõi trạng thái dừng / đứng yên (standby)
-    if (v < 1.0f) {
+    // Theo dõi trạng thái dừng / đứng yên (standby) theo ngưỡng môn thể thao
+    float speed_threshold = (s_activity_mode == ACTIVITY_MODE_HIKE) ? 0.6f : 1.5f;
+    if (v < speed_threshold || !gps_quality_ok) {
         if (s_low_speed_start == 0) s_low_speed_start = now;
     } else {
         s_low_speed_start = 0;
@@ -254,13 +312,21 @@ void sd_logger_log(SensorSnapshot *snap) {
     }
     float delta_alt = has_ele ? fabsf(alt - s_last_alt) : 0.0f;
 
-    bool high_maneuver = (delta_heading >= 15.0f || delta_alt >= 3.0f);
+    // Đánh giá cơ động mạnh (High maneuver) tùy theo chế độ
+    bool high_maneuver = false;
+    if (s_activity_mode == ACTIVITY_MODE_HIKE) {
+        // Leo núi: Nhạy thay đổi cao độ (>= 2m) hoặc đường dốc quanh co (>= 25 deg)
+        high_maneuver = (delta_heading >= 25.0f || delta_alt >= 2.0f);
+    } else {
+        // Đạp xe: Nhạy ôm cua gấp (>= 15 deg) hoặc tốc độ cao (>= 25 km/h)
+        high_maneuver = (delta_heading >= 15.0f || v >= 25.0f || delta_alt >= 3.0f);
+    }
 
     uint32_t sample_interval = 3000; // Mặc định chuyển động đều: 3s
     if (high_maneuver) {
         sample_interval = 1000;      // Khúc cua / đổi cao độ mạnh: 1s
     } else if (is_standby) {
-        sample_interval = 10000;     // Đứng yên: 10s
+        sample_interval = 10000;     // Đứng yên / trong phòng: 10s
     }
 
     if (s_last_heading >= 0 && (now - s_last_sample_time < sample_interval)) {
@@ -289,10 +355,11 @@ void sd_logger_log(SensorSnapshot *snap) {
     }
 
     // Format bản ghi Compact CSV (~32-35 bytes): ts,lat,lon,alt
+    // Sử dụng log_lat, log_lon (đã khóa cứng chống trôi dạt khi vào nhà)
     char line_buf[64];
     int len = snprintf(line_buf, sizeof(line_buf), "%lu,%.6f,%.6f,%.1f\n",
                        (unsigned long)epoch_time,
-                       snap->gps.latitude, snap->gps.longitude, 
+                       log_lat, log_lon, 
                        alt);
 
     if (len > 0 && len < (int)sizeof(line_buf)) {

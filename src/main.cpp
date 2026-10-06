@@ -233,6 +233,12 @@ static bool initBMP() {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Đọc sensors → g_snap
 // ═══════════════════════════════════════════════════════════════════════════════
+static volatile bool s_manual_cal_req = false;
+
+void baro_request_recalibration(void) {
+    s_manual_cal_req = true;
+}
+
 static void readSensors() {
     uint32_t now = millis();
     static uint32_t lastSlowRead = 0;
@@ -300,42 +306,95 @@ static void readSensors() {
 
         // ── BMP580 ────────────────────────────────────────────────────────────────
         // Cao độ khí áp kế: h = 44330 * (1 - (P/P0)^0.1903)
-        // Hiệu chuẩn P0 tự động khi GPS đạt sóng tốt (sats >= 5, hdop <= 2.5)
-        // Tích lũy 8 mẫu hợp lệ (không reset trắng bộ đệm nếu có 1 giây nhiễu)
+        // Quy tắc chuẩn Garmin:
+        // 1. Chờ GPS có sóng 3D Fix ổn định liên tục ít nhất 35 giây (để chip GPS hội tụ
+        //    bộ lọc Kalman và tải xong Ephemeris, tránh lấy mẫu lúc cao độ GPS đang trôi).
+        // 2. Thu thập 5 mẫu trung bình rồi KHÓA CỨNG mốc P0 cho toàn bộ chuyến đi!
+        // 3. Chạy ngầm "Bộ lọc bù trôi chậm" (Drift Compensator) mỗi 15 phút để bù thời tiết.
+        // 4. Cho phép bấm nút "CALIB ALT" trên màn hình để hiệu chuẩn ngay lập tức bất cứ lúc nào.
         static float    s_p0_hpa          = 1013.25f;
         static bool     s_baro_cal        = false;
-        static uint8_t  s_cal_best_sats   = 0;
+        static uint16_t s_gps_warmup_sec  = 0;
         static double   s_cal_sum_p0      = 0;
         static uint8_t  s_cal_count       = 0;
-        static const uint8_t CAL_SAMPLES  = 8;
+        static const uint8_t CAL_SAMPLES  = 5;
 
         if (bmpOk && bmp.performReading()) {
             g_snap.baro.pressure_hpa  = bmp.pressure;
             g_snap.baro.temperature_c = bmp.temperature;
 
-            bool gps_usable = g_snap.gps.fix_valid && g_snap.gps.altitude_valid &&
-                              g_snap.gps.satellites >= 5 &&
-                              (g_snap.gps.hdop <= 2.5f || g_snap.gps.hdop > 90.0f);
-
-            bool can_calibrate = (!s_baro_cal) || (g_snap.gps.satellites >= s_cal_best_sats + 2);
-            if (can_calibrate && gps_usable) {
-                float k = 1.0f - g_snap.gps.altitude_m / 44330.0f;
-                if (k > 0.5f) {
-                    float p0 = g_snap.baro.pressure_hpa / powf(k, 5.255f);
-                    if (p0 > 970.0f && p0 < 1060.0f) {
-                        s_cal_sum_p0 += p0;
-                        s_cal_count++;
+            // Xử lý nút bấm thủ công "CALIB ALT" từ màn hình
+            if (s_manual_cal_req) {
+                if (g_snap.gps.fix_valid && g_snap.gps.altitude_valid && g_snap.gps.satellites >= 5) {
+                    float k = 1.0f - g_snap.gps.altitude_m / 44330.0f;
+                    if (k > 0.5f) {
+                        float p0 = g_snap.baro.pressure_hpa / powf(k, 5.255f);
+                        if (p0 > 970.0f && p0 < 1060.0f) {
+                            s_p0_hpa = p0;
+                            s_baro_cal = true; // Chốt ngay mốc mới
+                            s_gps_warmup_sec = 35;
+                            s_cal_count = 0;
+                            s_cal_sum_p0 = 0;
+                            Serial.printf("[BARO] >>> THU CONG CALIB: P0 = %.2f hPa (Alt_GPS = %.1fm) <<<\n",
+                                          s_p0_hpa, g_snap.gps.altitude_m);
+                        }
                     }
                 }
+                s_manual_cal_req = false;
+            }
 
-                if (s_cal_count >= CAL_SAMPLES) {
-                    s_p0_hpa         = (float)(s_cal_sum_p0 / s_cal_count);
-                    s_baro_cal       = true;
-                    s_cal_best_sats  = (uint8_t)g_snap.gps.satellites;
-                    s_cal_count      = 0;
-                    s_cal_sum_p0     = 0;
-                    Serial.printf("[BARO] Da hieu chinh P0 = %.2f hPa (sats=%u, hdop=%.2f, Alt_GPS=%.1fm)\n",
-                                  s_p0_hpa, s_cal_best_sats, g_snap.gps.hdop, g_snap.gps.altitude_m);
+            // CHỈ HIỆU CHUẨN 1 LẦN DUY NHẤT LÚC ĐẦU CHUYẾN ĐI (!s_baro_cal)
+            if (!s_baro_cal) {
+                bool gps_usable = g_snap.gps.fix_valid && g_snap.gps.altitude_valid &&
+                                  g_snap.gps.satellites >= 5 &&
+                                  (g_snap.gps.hdop <= 2.2f || g_snap.gps.hdop > 90.0f);
+
+                if (gps_usable) {
+                    s_gps_warmup_sec++;
+                    // Chỉ bắt đầu lấy mẫu sau khi GPS đã chạy ổn định ít nhất 35 giây
+                    if (s_gps_warmup_sec >= 35) {
+                        float k = 1.0f - g_snap.gps.altitude_m / 44330.0f;
+                        if (k > 0.5f) {
+                            float p0 = g_snap.baro.pressure_hpa / powf(k, 5.255f);
+                            if (p0 > 970.0f && p0 < 1060.0f) {
+                                s_cal_sum_p0 += p0;
+                                s_cal_count++;
+                            }
+                        }
+
+                        if (s_cal_count >= CAL_SAMPLES) {
+                            s_p0_hpa         = (float)(s_cal_sum_p0 / s_cal_count);
+                            s_baro_cal       = true; // KHÓA CỨNG MỐC P0 CHO TOÀN BỘ CHUYẾN ĐI!
+                            s_cal_count      = 0;
+                            s_cal_sum_p0     = 0;
+                            Serial.printf("[BARO] >>> GPS DA ON DINH (%us)! KHOA CUNG MOC P0 = %.2f hPa (sats=%u, hdop=%.2f, Alt_GPS=%.1fm) <<<\n",
+                                          s_gps_warmup_sec, s_p0_hpa, (unsigned)g_snap.gps.satellites, g_snap.gps.hdop, g_snap.gps.altitude_m);
+                        }
+                    }
+                } else {
+                    // Mất sóng khi chưa đủ 35s -> đếm lại để đảm bảo tính ổn định
+                    s_gps_warmup_sec = 0;
+                    s_cal_count = 0;
+                    s_cal_sum_p0 = 0;
+                }
+            } else {
+                // ── Bộ lọc bù trôi chậm thời tiết (Garmin Continuous Auto-Calibration) ──
+                // Mỗi 15 phút (900s), nếu GPS ngoài trời bắt nét tuyệt đối (sats >= 7, hdop <= 1.2f)
+                // So sánh Alt_GPS và Alt_Baro. Nếu lệch >= 8m do đổi thời tiết, kéo rê P0 tối đa 0.05 hPa (~0.4m)
+                static uint32_t s_last_drift_check_ms = 0;
+                if (now - s_last_drift_check_ms >= 900000) { // 15 phút = 900,000 ms
+                    s_last_drift_check_ms = now;
+                    bool gps_excellent = g_snap.gps.fix_valid && g_snap.gps.altitude_valid &&
+                                         g_snap.gps.satellites >= 7 && g_snap.gps.hdop <= 1.2f;
+                    if (gps_excellent && g_snap.baro.valid) {
+                        float alt_diff = g_snap.gps.altitude_m - g_snap.baro.altitude_m;
+                        if (fabsf(alt_diff) >= 8.0f) {
+                            float p0_nudge = (alt_diff > 0) ? 0.05f : -0.05f;
+                            s_p0_hpa += p0_nudge;
+                            Serial.printf("[BARO] >>> BU TROI THOI TIET (15p): Alt_GPS=%.1fm vs Baro=%.1fm (lech %.1fm) -> Nudge P0 to %.2f hPa <<<\n",
+                                          g_snap.gps.altitude_m, g_snap.baro.altitude_m, alt_diff, s_p0_hpa);
+                        }
+                    }
                 }
             }
 

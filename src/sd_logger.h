@@ -28,6 +28,10 @@ void sd_logger_get_stats(uint32_t *points_logged, size_t *buffer_usage);
 // Lấy thông tin tổng kết hành trình (quãng đường mét, thời gian giây)
 void sd_logger_get_summary(float *distance_m, uint32_t *duration_s);
 
+// Thiết lập và lấy chế độ thể thao (HIKE / BIKE)
+void sd_logger_set_activity_mode(ActivityMode mode);
+ActivityMode sd_logger_get_activity_mode(void);
+
 #ifdef __cplusplus
 }
 #endif

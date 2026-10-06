@@ -86,6 +86,11 @@ struct ImuData {
     bool  valid;
 };
 
+typedef enum {
+    ACTIVITY_MODE_HIKE = 0,
+    ACTIVITY_MODE_BIKE = 1
+} ActivityMode;
+
 struct SysData {
     uint32_t uptime_s;      // uptime (giây)
     float    battery_v;     // điện áp pin (V) — placeholder
@@ -94,6 +99,7 @@ struct SysData {
     bool     sd_ok;         // SD OK
     uint32_t sd_free_mb;    // SD free MB
     bool     is_logging_active; // Trạng thái đang ghi log
+    ActivityMode activity_mode; // Chế độ hoạt động (HIKE hoặc BIKE)
     uint32_t boot_count;        // So lan khoi dong (giu qua soft reset)
     const char *reset_reason;   // Ly do reset lan truoc (PANIC, TASK_WDT, BROWNOUT...)
 };
@@ -112,6 +118,11 @@ struct SensorSnapshot {
  * @note  Phải gọi TRONG vùng example_lvgl_lock(-1) / example_lvgl_unlock()
  */
 void ui_dashboard_init(void);
+
+/**
+ * @brief Yêu cầu hiệu chuẩn lại cao độ khí áp kế bằng cao độ GPS hiện tại
+ */
+void baro_request_recalibration(void);
 
 /**
  * @brief Cập nhật toàn bộ UI với dữ liệu mới (gọi bên trong example_lvgl_lock)
