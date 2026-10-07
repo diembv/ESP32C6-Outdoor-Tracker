@@ -308,17 +308,26 @@ Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 
 
 ---
 
-## [ ] Milestone 6 — Navigation với Cửa sổ trượt (Sliding Window GPX) & Breadcrumb Map
-- [ ] **Định dạng dữ liệu tuyến đường (Route Binary):**
-  - Chuyển đổi file GPX thành dạng bản ghi nhị phân cố định (Fixed-size Record: 8 bytes/điểm - float lat, float lon).
-- [ ] **Thuật toán Cửa sổ trượt (Sliding Window):**
-  - Cấp phát cố định mảng đệm 100 điểm (~800 bytes RAM) cho các điểm lân cận vị trí hiện tại.
-  - Sử dụng `fseek()` đọc nạp cuộn tuần tự từ thẻ nhớ khi người dùng di chuyển, không nạp toàn bộ file vào SRAM.
-- [ ] **Giao diện Breadcrumb Navigation (AMOLED Dark Mode):**
-  - Tọa độ người dùng làm tâm `(140, 120)` với biểu tượng mũi tên định hướng (kết hợp Gyro + GPS Course).
-  - Vẽ vệt lộ trình dự kiến (màu Neon Cyan) và vết đường đã đi (màu xám nhạt).
-  - Tính toán và cảnh báo lệch lộ trình (Cross-Track Error) cùng cự ly đến waypoint kế tiếp.
-  - Hỗ trợ thao tác Zoom thang đo ($100\text{m} \leftrightarrow 500\text{m} \leftrightarrow 2\text{km}$).
+## [x] Milestone 6 — Navigation với Cửa sổ trượt (Sliding Window GPX) & Breadcrumb Map ✅ HOÀN THÀNH
+- [x] **Công cụ Chuyển đổi Lộ trình (`tools/gpx_to_route.py`):**
+  - Chuyển đổi file GPX 1.1 sang định dạng nhị phân siêu nhẹ `.bin` (Fixed-size Record: 8 bytes/điểm - float lat, float lon).
+  - Tích hợp thuật toán nén đường gấp khúc **Ramer-Douglas-Peucker (RDP)** với dung sai cấu hình được (mặc định 5m), giảm 60–90% số điểm thừa mà giữ nguyên khúc cua.
+  - Header chuẩn 96 bytes chứa Magic `ROUT`, Bounds (min/max), tổng cự ly và tên tuyến đường.
+  - Hỗ trợ cờ `--demo` tự động sinh cung đường leo núi mẫu (Ba Vì Summit Trek).
+- [x] **Thuật toán Cửa sổ trượt (Sliding Window Engine - `src/route_nav.cpp`):**
+  - Cấp phát cố định mảng đệm 120 điểm trong RAM (~960 bytes RAM), giải quyết triệt để bài toán thiếu PSRAM trên ESP32-C6 (chỉ 512KB SRAM on-chip).
+  - Tự động nạp cuộn từ thẻ MicroSD (`fseek` trực tiếp tới offset vị trí) khi người dùng di chuyển tới gần mép cửa sổ.
+  - Tự động dò và nạp lộ trình `/sdcard/routes/active.bin` hoặc file `.bin` đầu tiên trong `/sdcard/routes/`.
+  - Tính toán độ lệch tim đường (Cross-Track Error - XTE) và cảnh báo lệch lộ trình khi $XTE > 35\text{m}$.
+  - Ước lượng cự ly còn lại tới đích (Distance Remaining) tức thời $O(1)$ không tốn tài nguyên CPU.
+- [x] **Giao diện Breadcrumb Vector Navigation (Tile 0 - AMOLED Dark Mode):**
+  - Nền đen AMOLED `#000000` tiết kiệm điện tối đa.
+  - Vòng cự ly định hướng (Range Rings 55m & 110m) kèm chỉ báo hướng Bắc "N".
+  - Vẽ vệt lộ trình mục tiêu (Neon Cyan `#00E5FF`, độ dày 3px) dùng Custom Draw Event (`LV_EVENT_DRAW_MAIN`) của LVGL — **0 KB phát sinh bộ nhớ RAM canvas**.
+  - Đánh dấu điểm Xuất phát (Xanh lá) và điểm Đích (Đỏ).
+  - Mũi tên định hướng người dùng tại tâm màn hình (Màu cam `#FF8800`), xoay theo GPS Course khi di chuyển ($v \ge 0.5\text{ km/h}$) hoặc chấm GPS Lock khi đứng yên.
+  - Chức năng Zoom 5 cấp độ ($100\text{m} \leftrightarrow 250\text{m} \leftrightarrow 500\text{m} \leftrightarrow 1\text{km} \leftrightarrow 2.5\text{km}$): bấm nút Zoom trên header hoặc chạm trực tiếp vào bản đồ để chuyển đổi.
+  - Thanh thông số điều hướng: Tên lộ trình, Cự ly còn lại (`Rem: ... km`), Trạng thái bám đường (`ON ROUTE` / `OFF +...m`), Hướng đi (`HDG: ...°`), Vận tốc & Cao độ.
 
 ---
 

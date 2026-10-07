@@ -4,6 +4,7 @@
  */
 
 #include "ui_dashboard.h"
+#include "route_nav.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -26,9 +27,16 @@ static lv_obj_t *t1_lbl_coords;
 static lv_obj_t *t1_lbl_env;       
 static lv_obj_t *t1_dot_fix;       
 
-// ── Tile 2: Navigation (Bên phải) ────────────────────────────────────────────
-static lv_obj_t *t2_lbl_direction; 
-static lv_obj_t *t2_lbl_note;     
+// ── Tile 0: Navigation & Breadcrumb Map (Bên trái) ───────────────────────────
+static lv_obj_t *t0_lbl_route_name; 
+static lv_obj_t *t0_btn_zoom;
+static lv_obj_t *t0_lbl_zoom;
+static lv_obj_t *t0_map_area;
+static lv_obj_t *t0_lbl_dist_rem;
+static lv_obj_t *t0_lbl_xte;
+static lv_obj_t *t0_lbl_course;
+static lv_obj_t *t0_lbl_speed_alt;
+static lv_obj_t *t0_lbl_map_note;     
 
 // ── Tile 0: System (Bên trái) ────────────────────────────────────────────────
 static lv_obj_t *t0_lbl_gps_stats; 
@@ -134,33 +142,244 @@ static void style_tile(lv_obj_t *tile)
 // Swipe gesture callback removed: s_tileview handles native horizontal swipes smoothly without interference.
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Tile 0: Navigation (Bên trái)
+//  Tile 0: Navigation & Breadcrumb Map (Bên trái)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+extern SensorSnapshot g_snap;
+
+static void btn_zoom_event_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_CLICKED) {
+        route_nav_cycle_zoom();
+        const RouteNavStatus *nav = route_nav_get_status();
+        if (nav && t0_lbl_zoom) {
+            char zbuf[16];
+            if (nav->zoom_radius_m >= 1000.0f) {
+                snprintf(zbuf, sizeof(zbuf), "%.1fkm", nav->zoom_radius_m / 1000.0f);
+            } else {
+                snprintf(zbuf, sizeof(zbuf), "%dm", (int)nav->zoom_radius_m);
+            }
+            lv_label_set_text(t0_lbl_zoom, zbuf);
+        }
+        if (t0_map_area) {
+            lv_obj_invalidate(t0_map_area);
+        }
+    }
+}
+
+static void map_draw_event_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_DRAW_MAIN) return;
+
+    lv_obj_t * obj = lv_event_get_target(e);
+    lv_draw_ctx_t * draw_ctx = lv_event_get_draw_ctx(e);
+    if (!draw_ctx) return;
+
+    lv_area_t coords;
+    lv_obj_get_coords(obj, &coords);
+
+    int16_t cx = (coords.x1 + coords.x2) / 2; // 140
+    int16_t cy = (coords.y1 + coords.y2) / 2; // ~206
+
+    // 1. Vẽ các vòng cự ly (Range Rings / Scale Circles)
+    lv_point_t center_pt = { (lv_coord_t)cx, (lv_coord_t)cy };
+
+    lv_draw_arc_dsc_t arc_dsc;
+    lv_draw_arc_dsc_init(&arc_dsc);
+    arc_dsc.color = lv_color_hex(0x21262D); // Subtle dark slate
+    arc_dsc.width = 1;
+    lv_draw_arc(draw_ctx, &arc_dsc, &center_pt, 105, 0, 360);
+
+    arc_dsc.color = lv_color_hex(0x161C24);
+    lv_draw_arc(draw_ctx, &arc_dsc, &center_pt, 52, 0, 360);
+
+    // Chữ 'N' chỉ hướng Bắc
+    lv_draw_label_dsc_t label_dsc;
+    lv_draw_label_dsc_init(&label_dsc);
+    label_dsc.color = CLR_DIMTEXT;
+    label_dsc.font  = &lv_font_montserrat_12;
+    lv_area_t n_area;
+    n_area.x1 = cx - 8; n_area.x2 = cx + 8;
+    n_area.y1 = cy - 105 - 14; n_area.y2 = cy - 105;
+    lv_draw_label(draw_ctx, &label_dsc, &n_area, "N", NULL);
+
+    // 2. Vẽ Vệt Lộ Trình Tuyến Đường (Route Polyline)
+    const RouteNavStatus *nav = route_nav_get_status();
+    if (nav && nav->is_active && nav->window_points && nav->window_count > 1) {
+        lv_draw_line_dsc_t line_dsc;
+        lv_draw_line_dsc_init(&line_dsc);
+        line_dsc.color = CLR_ACCENT; // 0x00FFFF
+        line_dsc.width = 3;
+        line_dsc.round_start = 1;
+        line_dsc.round_end = 1;
+
+        double ref_lat = g_snap.gps.fix_valid ? g_snap.gps.latitude : (double)nav->window_points[0].lat;
+        double ref_lon = g_snap.gps.fix_valid ? g_snap.gps.longitude : (double)nav->window_points[0].lon;
+        float radius = nav->zoom_radius_m;
+
+        int16_t prev_x = 0, prev_y = 0;
+        bool has_prev = false;
+
+        for (uint32_t i = 0; i < nav->window_count; i++) {
+            int16_t sx, sy;
+            bool ok = route_nav_project_to_screen(
+                nav->window_points[i].lat, nav->window_points[i].lon,
+                ref_lat, ref_lon,
+                cx, cy, radius,
+                &sx, &sy
+            );
+
+            if (has_prev && ok) {
+                lv_point_t p1 = { (lv_coord_t)prev_x, (lv_coord_t)prev_y };
+                lv_point_t p2 = { (lv_coord_t)sx, (lv_coord_t)sy };
+                lv_draw_line(draw_ctx, &line_dsc, &p1, &p2);
+            }
+            prev_x = sx;
+            prev_y = sy;
+            has_prev = ok;
+        }
+
+        // Điểm Đích (Đỏ) nếu chạm đuôi route
+        if (nav->window_start_idx + nav->window_count >= nav->total_points) {
+            int16_t fx, fy;
+            uint32_t last_i = nav->window_count - 1;
+            if (route_nav_project_to_screen(nav->window_points[last_i].lat, nav->window_points[last_i].lon,
+                                           ref_lat, ref_lon, cx, cy, radius, &fx, &fy)) {
+                lv_draw_rect_dsc_t fin_dsc;
+                lv_draw_rect_dsc_init(&fin_dsc);
+                fin_dsc.bg_color = CLR_RED;
+                fin_dsc.radius = LV_RADIUS_CIRCLE;
+                lv_area_t fin_area = { (lv_coord_t)(fx - 4), (lv_coord_t)(fy - 4), (lv_coord_t)(fx + 4), (lv_coord_t)(fy + 4) };
+                lv_draw_rect(draw_ctx, &fin_dsc, &fin_area);
+            }
+        }
+
+        // Điểm Xuất phát (Xanh lá) nếu chạm đầu route
+        if (nav->window_start_idx == 0) {
+            int16_t sx, sy;
+            if (route_nav_project_to_screen(nav->window_points[0].lat, nav->window_points[0].lon,
+                                           ref_lat, ref_lon, cx, cy, radius, &sx, &sy)) {
+                lv_draw_rect_dsc_t st_dsc;
+                lv_draw_rect_dsc_init(&st_dsc);
+                st_dsc.bg_color = CLR_GREEN;
+                st_dsc.radius = LV_RADIUS_CIRCLE;
+                lv_area_t st_area = { (lv_coord_t)(sx - 4), (lv_coord_t)(sy - 4), (lv_coord_t)(sx + 4), (lv_coord_t)(sy + 4) };
+                lv_draw_rect(draw_ctx, &st_dsc, &st_area);
+            }
+        }
+    } else {
+        // Thông báo khi chưa nạp route
+        lv_draw_label_dsc_t no_route_dsc;
+        lv_draw_label_dsc_init(&no_route_dsc);
+        no_route_dsc.color = CLR_DIMTEXT;
+        no_route_dsc.font = &lv_font_montserrat_12;
+        no_route_dsc.align = LV_TEXT_ALIGN_CENTER;
+        lv_area_t msg_area = { coords.x1, (lv_coord_t)(cy - 12), coords.x2, (lv_coord_t)(cy + 12) };
+        lv_draw_label(draw_ctx, &no_route_dsc, &msg_area, "NO ROUTE (Put .bin in /sdcard/routes/)", NULL);
+    }
+
+    // 3. Vẽ Vị Trí & Hướng Người Dùng (User Marker) ở tâm (cx, cy)
+    if (g_snap.gps.fix_valid) {
+        if (g_snap.gps.speed_kmh >= 0.5f) {
+            // Đang di chuyển: Mũi tên hướng theo Course
+            float rad = g_snap.gps.course_deg * (float)(M_PI / 180.0);
+            float sin_h = sinf(rad);
+            float cos_h = cosf(rad);
+
+            lv_point_t p_tip   = { (lv_coord_t)(cx + 14 * sin_h), (lv_coord_t)(cy - 14 * cos_h) };
+            lv_point_t p_left  = { (lv_coord_t)(cx - 9 * cos_h - 7 * sin_h), (lv_coord_t)(cy - 9 * sin_h + 7 * cos_h) };
+            lv_point_t p_right = { (lv_coord_t)(cx + 9 * cos_h - 7 * sin_h), (lv_coord_t)(cy + 9 * sin_h + 7 * cos_h) };
+            lv_point_t p_notch = { (lv_coord_t)(cx - 3 * sin_h), (lv_coord_t)(cy + 3 * cos_h) };
+
+            lv_draw_line_dsc_t arrow_dsc;
+            lv_draw_line_dsc_init(&arrow_dsc);
+            arrow_dsc.color = CLR_ORANGE;
+            arrow_dsc.width = 2;
+            arrow_dsc.round_start = 1;
+            arrow_dsc.round_end = 1;
+
+            lv_draw_line(draw_ctx, &arrow_dsc, &p_left, &p_tip);
+            lv_draw_line(draw_ctx, &arrow_dsc, &p_tip, &p_right);
+            lv_draw_line(draw_ctx, &arrow_dsc, &p_right, &p_notch);
+            lv_draw_line(draw_ctx, &arrow_dsc, &p_notch, &p_left);
+        } else {
+            // Đứng yên: Chấm xanh viền vàng
+            lv_draw_rect_dsc_t dot_dsc;
+            lv_draw_rect_dsc_init(&dot_dsc);
+            dot_dsc.bg_color = CLR_GREEN;
+            dot_dsc.radius = LV_RADIUS_CIRCLE;
+            dot_dsc.border_color = CLR_YELLOW;
+            dot_dsc.border_width = 2;
+            lv_area_t dot_area = { (lv_coord_t)(cx - 5), (lv_coord_t)(cy - 5), (lv_coord_t)(cx + 5), (lv_coord_t)(cy + 5) };
+            lv_draw_rect(draw_ctx, &dot_dsc, &dot_area);
+        }
+    } else {
+        // Chưa fix: Chấm đỏ cảnh báo
+        lv_draw_rect_dsc_t dot_dsc;
+        lv_draw_rect_dsc_init(&dot_dsc);
+        dot_dsc.bg_color = CLR_RED;
+        dot_dsc.radius = LV_RADIUS_CIRCLE;
+        lv_area_t dot_area = { (lv_coord_t)(cx - 4), (lv_coord_t)(cy - 4), (lv_coord_t)(cx + 4), (lv_coord_t)(cy + 4) };
+        lv_draw_rect(draw_ctx, &dot_dsc, &dot_area);
+    }
+}
+
 static void build_tile0_navigation(lv_obj_t *tile)
 {
     style_tile(tile);
 
-    lv_obj_t *hdr = make_val_label(tile, "NAVIGATION", CLR_ACCENT, &lv_font_montserrat_20, 8, 12);
-    (void)hdr;
-    make_hline(tile, 46);
+    // 1. Header: Route Name (trái) & Nút Zoom (phải)
+    t0_lbl_route_name = make_val_label(tile, "ROUTE", CLR_ACCENT, &lv_font_montserrat_20, 8, 12);
+    lv_obj_set_width(t0_lbl_route_name, 175);
 
-    make_key_label(tile, "Course / Heading", SCREEN_W/2 - 60, 60);
+    t0_btn_zoom = lv_btn_create(tile);
+    lv_obj_set_size(t0_btn_zoom, 74, 30);
+    lv_obj_set_pos(t0_btn_zoom, SCREEN_W - 82, 8);
+    lv_obj_set_style_bg_color(t0_btn_zoom, lv_color_hex(0x1F2937), 0);
+    lv_obj_set_style_bg_color(t0_btn_zoom, lv_color_hex(0x374151), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(t0_btn_zoom, CLR_BORDER, 0);
+    lv_obj_set_style_border_width(t0_btn_zoom, 1, 0);
+    lv_obj_set_style_radius(t0_btn_zoom, 6, 0);
+    lv_obj_clear_flag(t0_btn_zoom, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_add_event_cb(t0_btn_zoom, btn_zoom_event_cb, LV_EVENT_CLICKED, NULL);
 
-    t2_lbl_direction = lv_label_create(tile);
-    lv_label_set_text(t2_lbl_direction, "N (000 deg)");
-    lv_obj_set_style_text_font(t2_lbl_direction, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(t2_lbl_direction, CLR_ORANGE, 0);
-    lv_obj_set_style_text_align(t2_lbl_direction, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_width(t2_lbl_direction, SCREEN_W);
-    lv_obj_set_pos(t2_lbl_direction, 0, 80);
+    t0_lbl_zoom = lv_label_create(t0_btn_zoom);
+    lv_label_set_text(t0_lbl_zoom, "250m");
+    lv_obj_set_style_text_font(t0_lbl_zoom, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(t0_lbl_zoom, CLR_WHITE, 0);
+    lv_obj_clear_flag(t0_lbl_zoom, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(t0_lbl_zoom);
 
-    make_hline(tile, 130);
+    make_hline(tile, 44);
 
-    t2_lbl_note = lv_label_create(tile);
-    lv_label_set_text(t2_lbl_note, "Course over ground (v > 0.5 km/h)");
-    lv_obj_set_style_text_font(t2_lbl_note, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(t2_lbl_note, CLR_DIMTEXT, 0);
-    lv_obj_set_pos(t2_lbl_note, 8, 140);
+    // 2. Map Canvas Area (y = 46..366, cao 320px)
+    t0_map_area = lv_obj_create(tile);
+    lv_obj_set_size(t0_map_area, SCREEN_W, 320);
+    lv_obj_set_pos(t0_map_area, 0, 46);
+    lv_obj_set_style_bg_color(t0_map_area, CLR_BG, 0);
+    lv_obj_set_style_bg_opa(t0_map_area, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(t0_map_area, 0, 0);
+    lv_obj_set_style_pad_all(t0_map_area, 0, 0);
+    lv_obj_clear_flag(t0_map_area, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(t0_map_area, map_draw_event_cb, LV_EVENT_DRAW_MAIN, NULL);
+    lv_obj_add_event_cb(t0_map_area, btn_zoom_event_cb, LV_EVENT_CLICKED, NULL);
+    strip_scrollbar(t0_map_area);
+
+    make_hline(tile, 368);
+
+    // 3. Bottom Info Panel (y = 372..450)
+    // Dòng 1: Dist Remaining & Cross-Track Error
+    t0_lbl_dist_rem = make_val_label(tile, "Rem: -- km", CLR_WHITE, &lv_font_montserrat_20, 8, 372);
+    t0_lbl_xte = make_val_label(tile, "ON ROUTE", CLR_GREEN, &lv_font_montserrat_20, 148, 372);
+
+    make_hline(tile, 404);
+
+    // Dòng 2: Heading & Speed / Alt
+    t0_lbl_course = make_val_label(tile, "HDG: 000 deg N", CLR_ORANGE, &lv_font_montserrat_14, 8, 410);
+    t0_lbl_speed_alt = make_val_label(tile, "0.0 km/h | --m", CLR_DIMTEXT, &lv_font_montserrat_14, 148, 410);
+
+    // Dòng 3: Gợi ý thao tác
+    t0_lbl_map_note = make_val_label(tile, "Tap map/btn to zoom (100m-2.5km)", CLR_DIMTEXT, &lv_font_montserrat_12, 8, 434);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -569,16 +788,51 @@ void ui_dashboard_update(const SensorSnapshot *snap)
     }
     // ═══ Tile 0: Navigation (Trang bên trái) ══════════════════════════════════
     else if (act_tile == s_tile[0]) {
+        if (t0_map_area) {
+            lv_obj_invalidate(t0_map_area);
+        }
+
+        const RouteNavStatus *nav = route_nav_get_status();
+        if (nav && nav->is_active) {
+            snprintf(buf, sizeof(buf), "%.14s", nav->route_name);
+            lv_label_set_text(t0_lbl_route_name, buf);
+
+            snprintf(buf, sizeof(buf), "Rem: %.1fkm", nav->dist_remaining_km);
+            lv_label_set_text(t0_lbl_dist_rem, buf);
+
+            if (nav->is_off_route) {
+                snprintf(buf, sizeof(buf), "OFF +%dm", (int)nav->cross_track_err_m);
+                lv_label_set_text(t0_lbl_xte, buf);
+                lv_obj_set_style_text_color(t0_lbl_xte, CLR_RED, 0);
+            } else {
+                snprintf(buf, sizeof(buf), "ON (%dm)", (int)nav->cross_track_err_m);
+                lv_label_set_text(t0_lbl_xte, buf);
+                lv_obj_set_style_text_color(t0_lbl_xte, CLR_GREEN, 0);
+            }
+        } else {
+            lv_label_set_text(t0_lbl_route_name, "FREE NAV");
+            lv_label_set_text(t0_lbl_dist_rem, "Rem: -- km");
+            lv_label_set_text(t0_lbl_xte, "NO ROUTE");
+            lv_obj_set_style_text_color(t0_lbl_xte, CLR_DIMTEXT, 0);
+        }
+
+        if (nav && t0_lbl_zoom) {
+            if (nav->zoom_radius_m >= 1000.0f) {
+                snprintf(buf, sizeof(buf), "%.1fkm", nav->zoom_radius_m / 1000.0f);
+            } else {
+                snprintf(buf, sizeof(buf), "%dm", (int)nav->zoom_radius_m);
+            }
+            lv_label_set_text(t0_lbl_zoom, buf);
+        }
+
         const char *dir = course_to_dir(snap->gps.course_deg);
         int32_t courseInt = (int32_t)snap->gps.course_deg;
-        snprintf(buf, sizeof(buf), "%s (%03ld deg)", dir, (long)courseInt);
-        lv_label_set_text(t2_lbl_direction, buf);
+        snprintf(buf, sizeof(buf), "HDG: %03ld deg %s", (long)courseInt, dir);
+        lv_label_set_text(t0_lbl_course, buf);
 
-        if (snap->gps.fix_valid && snap->gps.speed_kmh > 0.5f) {
-            lv_obj_set_style_text_color(t2_lbl_note, CLR_GREEN, 0);
-        } else {
-            lv_obj_set_style_text_color(t2_lbl_note, CLR_DIMTEXT, 0);
-        }
+        int alt_val = snap->baro.valid ? (int)snap->baro.altitude_m : (int)snap->gps.altitude_m;
+        snprintf(buf, sizeof(buf), "%.1f km/h | %dm", snap->gps.speed_kmh, alt_val);
+        lv_label_set_text(t0_lbl_speed_alt, buf);
     }
     // ═══ Tile 2: System (Trang bên phải) ══════════════════════════════════════
     else if (act_tile == s_tile[2]) {

@@ -23,6 +23,7 @@
 #include "lcd_config.h"
 #include "ui_dashboard.h"
 #include "sd_logger.h"
+#include "route_nav.h"
 #include "esp_sleep.h"
 #include "driver/uart.h"
 
@@ -578,9 +579,13 @@ void setup() {
     Serial.println(F("[SYS] Dashboard OK — swipe để chuyển trang.\n"));
     Serial.flush();
 
-    // ── MicroSD Logger (SPI2, CS=GPIO15) ──────────────────────────────────────
+    // ── MicroSD Logger & Route Nav (SPI2, CS=GPIO15) ─────────────────────────
     if (example_lvgl_lock(-1)) {
         sd_logger_init(&g_snap);
+        route_nav_init();
+        if (g_snap.sys.sd_ok) {
+            route_nav_autoload();
+        }
         example_lvgl_unlock();
     }
     Serial.flush();
@@ -686,11 +691,14 @@ void loop() {
         tLastGps = now;
     }
 
-    // ── 5. Đọc sensor mỗi 500ms ──────────────────────────────────────────────
+    // ── 5. Đọc sensor mỗi 200ms & cập nhật lộ trình ─────────────────────────
     if (now - tLastSensor >= SENSOR_READ_MS) {
         tLastSensor = now;
         if (example_lvgl_lock(-1)) {
             readSensors();
+            if (g_snap.gps.fix_valid) {
+                route_nav_update(g_snap.gps.latitude, g_snap.gps.longitude, g_snap.gps.speed_kmh);
+            }
             example_lvgl_unlock();
         }
     }
