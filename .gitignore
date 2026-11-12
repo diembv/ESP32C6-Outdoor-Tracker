@@ -4,3 +4,10 @@
 build_log.txt
 scratch/
 upload_log.txt
+
+# 3D Printing / CAD Temporary Files
+*.gcode
+*.step.bak
+*.stl.bak
+*~
+*.tmp
