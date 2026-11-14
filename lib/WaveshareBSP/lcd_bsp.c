@@ -27,7 +27,7 @@ static esp_lcd_panel_io_handle_t amoled_panel_io_handle = NULL;
 
 static const sh8601_lcd_init_cmd_t lcd_init_cmds[] = 
 {
-  {0x11, (uint8_t []){0x00}, 0, 80},   
+  {0x11, (uint8_t []){0x00}, 0, 120},   
   {0xC4, (uint8_t []){0x80}, 1, 0},
   
   {0x35, (uint8_t []){0x00}, 1, 0},
@@ -36,7 +36,7 @@ static const sh8601_lcd_init_cmd_t lcd_init_cmds[] =
   {0x63, (uint8_t []){0xFF}, 1, 1},
   {0x51, (uint8_t []){0x00}, 1, 1},
 
-  {0x29, (uint8_t []){0x00}, 0, 10},
+  {0x29, (uint8_t []){0x00}, 0, 50},
 
   {0x51, (uint8_t []){0xB4}, 1, 0},    // 亮度 (180 ~70%, tiet kiem dien chong sut ap)
 };

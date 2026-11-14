@@ -52,11 +52,6 @@
 void ui_dashboard_init(void);
 
 /**
- * @brief Yêu cầu hiệu chuẩn lại cao độ khí áp kế bằng cao độ GPS hiện tại
- */
-void baro_request_recalibration(void);
-
-/**
  * @brief Cập nhật toàn bộ UI với dữ liệu mới (gọi bên trong example_lvgl_lock)
  * @param snap Pointer đến SensorSnapshot mới nhất
  * @note  Phải gọi TRONG vùng example_lvgl_lock(-1) / example_lvgl_unlock()

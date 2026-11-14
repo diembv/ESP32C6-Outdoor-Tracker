@@ -476,6 +476,7 @@ void setup() {
         if (g_snap.sys.sd_ok) {
             route_nav_autoload();
         }
+        set_amoled_backlight(180);
         example_lvgl_unlock();
     }
     Serial.flush();

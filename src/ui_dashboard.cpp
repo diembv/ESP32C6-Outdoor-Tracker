@@ -4,6 +4,7 @@
  */
 
 #include "ui_dashboard.h"
+#include "core/baro_fusion.h"
 #include "route_nav.h"
 #include <string.h>
 #include <stdio.h>
