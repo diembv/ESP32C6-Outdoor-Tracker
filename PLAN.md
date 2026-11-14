@@ -1,8 +1,10 @@
 # ESP32-C6 Outdoor GPS Tracker — Kế Hoạch Phát Triển
 
-> **Board:** Waveshare ESP32-C6-Touch-AMOLED-1.64
+> **Board gốc:** Waveshare ESP32-C6-Touch-AMOLED-1.64
+> **Định hướng mở rộng:** Hỗ trợ đa bo mạch (Waveshare ESP32-S3 AMOLED 1.75C/1.8/2.06/2.16/2.41 & đa MCU)
 > **Framework:** PlatformIO + Arduino
 > **Ngày bắt đầu:** 2026-09-26
+> **Kế hoạch nâng cấp chi tiết:** Xem `DOCS_MULTI_BOARD_PLAN.md` hoặc Milestone 8 bên dưới.
 
 ---
 
@@ -337,6 +339,42 @@ Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 
   - Tải file nhị phân lộ trình từ điện thoại bắn sang thẻ nhớ ESP32-C6.
 - [ ] **Wi-Fi Hotspot Mode (Trích xuất dữ liệu nhanh):**
   - Kích hoạt Web Server tạm thời để tải toàn bộ file CSV từ thẻ MicroSD về điện thoại.
+
+---
+
+## [ ] Milestone 8 — Multi-Board & Multi-Display HAL Architecture (Nâng Cấp Kiến Trúc Đa Nền Tảng)
+
+Kế hoạch tái cấu trúc từ bo mạch đơn ESP32-C6 sang hỗ trợ đa bo mạch (ESP32-S3 AMOLED 1.75C/1.8/2.06/2.16/2.41) và mở đường cho các MCU khác (RP2040, STM32, nRF52).
+
+### 1. Ma Trận Phần Cứng Mục Tiêu
+- **ESP32-C6 1.64"**: 280×456 Dọc, SH8601, FT3168, ADC GPIO0, 512KB SRAM (No PSRAM), Shared SPI2 SD card.
+- **ESP32-S3 1.75C"**: 466×466 **Tròn (Round)**, CO5300, CST9217 (`0x5A`), AXP2101 PMIC, TCA9554 EXIO, PCF85063 RTC, 8MB PSRAM, SDMMC.
+- **ESP32-S3 1.8"**: 368×448 Dọc, SH8601(V1)/CO5300(V2), FT3168(V1)/CST820(V2), AXP2101 PMIC, TCA9554 EXIO, PCF85063 RTC, 8MB PSRAM.
+- **ESP32-S3 2.06" Watch**: 410×502 Dọc, CO5300, FT3168, AXP2101 PMIC, PCF85063 RTC, 8MB PSRAM, 32MB Flash, SDMMC.
+- **ESP32-S3 2.16"**: 480×480 **Vuông (Square)**, CO5300, CST9220 (`0x5A`), AXP2101 PMIC, PCF85063 RTC, 8MB PSRAM, SDMMC.
+- **ESP32-S3 2.41"**: 600×450 **Ngang (Landscape)**, RM690B0, FT6336 (`0x38`), TCA9554 EXIO (`AMOLED_EN`), PCF85063 RTC, 8MB PSRAM, SDMMC.
+
+### 2. Kiến Trúc 3 Tầng
+- **Tầng 1 (Core Domain & Adaptive UI)**:
+  - `baro_fusion`: Thuật toán mốc P0 Garmin + bộ lọc bù trôi chậm 15 phút.
+  - `track_logger`: Smart CSV Logging, Anti-Drift khi vào nhà, Sport Profiles (Hiking / Cycling).
+  - `route_nav`: Sliding-window GPX/BIN + tính toán chiếu điểm lên màn hình động (`viewport_radius_px`).
+  - `ui_viewmodel`: Định dạng chuỗi số liệu và quản lý sự kiện độc lập phần cứng.
+  - `ui_layout_*`: 3 Profile hình học: **Portrait/Square** (Flex dọc), **Round** (Safe-area tròn đồng tâm), **Landscape** (Split-view 2 cột).
+- **Tầng 2 (HAL)**:
+  - `hal_system & hal_power`: Điều khiển PMIC AXP2101, TCA9554 EXIO, ADC Pin, Sleep/Wake.
+  - `hal_display & hal_touch`: Giao diện LVGL Port, Mutex an toàn, độ sáng, Touch đọc qua Wire duy nhất.
+  - `hal_sensors & hal_rtc`: GNSS UART, IMU QMI8658, Baro BMP580, RTC PCF85063.
+  - `hal_storage`: SDSPI (shared bus có lock) và SDMMC (độc lập, không lock UI).
+- **Tầng 3 (Board Descriptors)**:
+  - Thư mục `include/boards/board_*.h` chứa pinout và đặc tả từng bo.
+
+### 3. Lộ Trình Triển Khai 5 Giai Đoạn (Đảm bảo luôn build xanh)
+- [x] **Phase 1: Tách Core Domain & Tạo Board Descriptor C6** (Rút gọn `main.cpp`, tách `baro_fusion`, `track_logger`, tạo `board_ws_c6_amoled_164.h`). ✅ HOÀN THÀNH
+- [ ] **Phase 2: Tầng Nguồn & I2C Phụ Trợ (`hal_power`, `hal_sensors`)** (Driver Wire nhẹ cho AXP2101, TCA9554, PCF85063, QMI8658, BMP580).
+- [ ] **Phase 3: Hợp Nhất QSPI AMOLED & Cảm Ứng Đa IC (`hal_display`, `hal_touch`, `hal_storage`)** (Hỗ trợ SH8601/CO5300/RM690B0, FT3168/6336, CST8xx, CST92xx, SDMMC).
+- [ ] **Phase 4: Adaptive UI 3 Profiles** (Tách `ui_viewmodel`, xây dựng `layout_portrait`, `layout_round`, `layout_landscape`).
+- [ ] **Phase 5: Multi-Env `platformio.ini` & Compile Matrix Test** (Cấu hình 6 environment và chạy kiểm tra biên dịch đồng loạt).
 
 ---
 

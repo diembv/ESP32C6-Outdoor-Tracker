@@ -22,10 +22,12 @@
 #include <lvgl.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "app_types.h"
+#include "boards/board_select.h"
 
 // ── Screen resolution ─────────────────────────────────────────────────────────
-#define SCREEN_W   280
-#define SCREEN_H   456
+#define SCREEN_W   BOARD_DISP_WIDTH
+#define SCREEN_H   BOARD_DISP_HEIGHT
 
 // ── AMOLED Color palette ──────────────────────────────────────────────────────
 #define CLR_BG        lv_color_hex(0x000000)   // Nền đen tuyệt đối (AMOLED)
@@ -40,76 +42,6 @@
 #define CLR_RED       lv_color_hex(0xFF3B30)   // No fix, error
 #define CLR_DIMTEXT   lv_color_hex(0x6B7280)   // Dim label keys
 #define CLR_ENVGREEN  lv_color_hex(0x00FF00)   // Env data (từ build hiện tại)
-
-// ── Sensor data structs ───────────────────────────────────────────────────────
-
-struct GpsData {
-    double   latitude;      // độ thập phân (N+, S-)
-    double   longitude;     // độ thập phân (E+, W-)
-    float    speed_kmh;     // tốc độ km/h
-    float    altitude_m;    // cao độ GPS (m)
-    float    course_deg;    // hướng di chuyển 0–359.9°
-    uint32_t satellites;    // số vệ tinh lock
-    bool     fix_valid;     // true = GPS fix hợp lệ
-    
-    // GPS Time & Date
-    bool     time_valid;
-    bool     date_valid;
-    uint16_t year;
-    uint8_t  month;
-    uint8_t  day;
-    uint8_t  hour;
-    uint8_t  minute;
-    uint8_t  second;
-
-    uint32_t chars_proc;    // NMEA chars processed
-    uint32_t fixes;         // sentences with fix
-    uint32_t checksum_err;  // failed checksum
-
-    bool     altitude_valid; // gpsParser.altitude.isValid()
-    float    hdop;           // Horizontal Dilution of Precision (99.9 = không hợp lệ)
-};
-
-struct BaroData {
-    float pressure_hpa;     // áp suất hPa (BMP580.pressure trả về thẳng hPa)
-    float temperature_c;    // nhiệt độ °C
-    float altitude_m;       // cao độ baro (m) — tính từ áp suất
-    bool  valid;            // sensor đọc được
-    bool  calibrated;       // true = đã hiệu chỉnh áp suất mốc P0 bằng cao độ GPS
-    float sea_level_hpa;    // áp suất mốc mực nước biển P0 đang dùng (mặc định 1013.25)
-};
-
-struct ImuData {
-    float pitch_deg;        // Pitch (°) — từ accelerometer
-    float roll_deg;         // Roll  (°) — từ accelerometer
-    // Note: QMI8658 không có magnetometer → không có Yaw thực
-    bool  valid;
-};
-
-typedef enum {
-    ACTIVITY_MODE_HIKE = 0,
-    ACTIVITY_MODE_BIKE = 1
-} ActivityMode;
-
-struct SysData {
-    uint32_t uptime_s;      // uptime (giây)
-    float    battery_v;     // điện áp pin (V) — placeholder
-    uint8_t  battery_pct;   // % pin — placeholder
-    bool     sd_present;    // SD có mặt
-    bool     sd_ok;         // SD OK
-    uint32_t sd_free_mb;    // SD free MB
-    bool     is_logging_active; // Trạng thái đang ghi log
-    ActivityMode activity_mode; // Chế độ hoạt động (HIKE hoặc BIKE)
-    uint32_t boot_count;        // So lan khoi dong (giu qua soft reset)
-    const char *reset_reason;   // Ly do reset lan truoc (PANIC, TASK_WDT, BROWNOUT...)
-};
-
-struct SensorSnapshot {
-    GpsData  gps;
-    BaroData baro;
-    ImuData  imu;
-    SysData  sys;
-};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 

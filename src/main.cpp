@@ -19,10 +19,13 @@
 #include <Adafruit_BMP5xx.h>
 #include <math.h>
 #include <lvgl.h>
+#include "boards/board_select.h"
+#include "app_types.h"
 #include "lcd_bsp.h"
 #include "lcd_config.h"
 #include "ui_dashboard.h"
-#include "sd_logger.h"
+#include "core/baro_fusion.h"
+#include "core/track_logger.h"
 #include "route_nav.h"
 #include "esp_sleep.h"
 #include "driver/uart.h"
@@ -30,7 +33,7 @@
 #include <time.h>
 #include <sys/time.h>
 
-#define BTN_PWR_PIN 9
+#define BTN_PWR_PIN BOARD_BTN_PWR_PIN
 
 // ── Chan doan reset: bien nam trong RTC RAM, song sot qua soft reset/crash ──
 RTC_NOINIT_ATTR static uint32_t s_boot_magic;
@@ -55,26 +58,9 @@ static const char *reset_reason_str(esp_reset_reason_t r) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Pin Config
+//  Pin Config (Resolved from boards/board_select.h)
 // ═══════════════════════════════════════════════════════════════════════════════
-#ifndef GPS_RX_PIN
-#  define GPS_RX_PIN   2
-#endif
-#ifndef GPS_TX_PIN
-#  define GPS_TX_PIN   3
-#endif
-#ifndef GPS_BAUD
-#  define GPS_BAUD  9600
-#endif
-#ifndef I2C_SDA_PIN
-#  define I2C_SDA_PIN 18
-#endif
-#ifndef I2C_SCL_PIN
-#  define I2C_SCL_PIN  8
-#endif
-#ifndef BMP580_I2C_ADDR
-#  define BMP580_I2C_ADDR 0x47
-#endif
+#define BMP580_ADDR_ACTIVE BOARD_BMP580_I2C_ADDR
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  QMI8658 — Direct Wire Driver (không dùng SensorLib)
@@ -218,8 +204,8 @@ static void i2cScan() {
 //  BMP580 Init
 // ═══════════════════════════════════════════════════════════════════════════════
 static bool initBMP() {
-    Serial.printf("[BMP] Kết nối 0x%02X ... ", BMP580_I2C_ADDR);
-    if (!bmp.begin(BMP580_I2C_ADDR, &Wire)) {
+    Serial.printf("[BMP] Kết nối 0x%02X ... ", BMP580_ADDR_ACTIVE);
+    if (!bmp.begin(BMP580_ADDR_ACTIVE, &Wire)) {
         Serial.println(F("THẤT BẠI."));
         return false;
     }
@@ -234,12 +220,6 @@ static bool initBMP() {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Đọc sensors → g_snap
 // ═══════════════════════════════════════════════════════════════════════════════
-static volatile bool s_manual_cal_req = false;
-
-void baro_request_recalibration(void) {
-    s_manual_cal_req = true;
-}
-
 static void readSensors() {
     uint32_t now = millis();
     static uint32_t lastSlowRead = 0;
@@ -305,105 +285,9 @@ static void readSensors() {
             }
         }
 
-        // ── BMP580 ────────────────────────────────────────────────────────────────
-        // Cao độ khí áp kế: h = 44330 * (1 - (P/P0)^0.1903)
-        // Quy tắc chuẩn Garmin:
-        // 1. Chờ GPS có sóng 3D Fix ổn định liên tục ít nhất 35 giây (để chip GPS hội tụ
-        //    bộ lọc Kalman và tải xong Ephemeris, tránh lấy mẫu lúc cao độ GPS đang trôi).
-        // 2. Thu thập 5 mẫu trung bình rồi KHÓA CỨNG mốc P0 cho toàn bộ chuyến đi!
-        // 3. Chạy ngầm "Bộ lọc bù trôi chậm" (Drift Compensator) mỗi 15 phút để bù thời tiết.
-        // 4. Cho phép bấm nút "CALIB ALT" trên màn hình để hiệu chuẩn ngay lập tức bất cứ lúc nào.
-        static float    s_p0_hpa          = 1013.25f;
-        static bool     s_baro_cal        = false;
-        static uint16_t s_gps_warmup_sec  = 0;
-        static double   s_cal_sum_p0      = 0;
-        static uint8_t  s_cal_count       = 0;
-        static const uint8_t CAL_SAMPLES  = 5;
-
+        // ── BMP580 (Garmin-style 2-tier calibration via core/baro_fusion) ─────────
         if (bmpOk && bmp.performReading()) {
-            g_snap.baro.pressure_hpa  = bmp.pressure;
-            g_snap.baro.temperature_c = bmp.temperature;
-
-            // Xử lý nút bấm thủ công "CALIB ALT" từ màn hình
-            if (s_manual_cal_req) {
-                if (g_snap.gps.fix_valid && g_snap.gps.altitude_valid && g_snap.gps.satellites >= 5) {
-                    float k = 1.0f - g_snap.gps.altitude_m / 44330.0f;
-                    if (k > 0.5f) {
-                        float p0 = g_snap.baro.pressure_hpa / powf(k, 5.255f);
-                        if (p0 > 970.0f && p0 < 1060.0f) {
-                            s_p0_hpa = p0;
-                            s_baro_cal = true; // Chốt ngay mốc mới
-                            s_gps_warmup_sec = 35;
-                            s_cal_count = 0;
-                            s_cal_sum_p0 = 0;
-                            Serial.printf("[BARO] >>> THU CONG CALIB: P0 = %.2f hPa (Alt_GPS = %.1fm) <<<\n",
-                                          s_p0_hpa, g_snap.gps.altitude_m);
-                        }
-                    }
-                }
-                s_manual_cal_req = false;
-            }
-
-            // CHỈ HIỆU CHUẨN 1 LẦN DUY NHẤT LÚC ĐẦU CHUYẾN ĐI (!s_baro_cal)
-            if (!s_baro_cal) {
-                bool gps_usable = g_snap.gps.fix_valid && g_snap.gps.altitude_valid &&
-                                  g_snap.gps.satellites >= 5 &&
-                                  (g_snap.gps.hdop <= 2.2f || g_snap.gps.hdop > 90.0f);
-
-                if (gps_usable) {
-                    s_gps_warmup_sec++;
-                    // Chỉ bắt đầu lấy mẫu sau khi GPS đã chạy ổn định ít nhất 35 giây
-                    if (s_gps_warmup_sec >= 35) {
-                        float k = 1.0f - g_snap.gps.altitude_m / 44330.0f;
-                        if (k > 0.5f) {
-                            float p0 = g_snap.baro.pressure_hpa / powf(k, 5.255f);
-                            if (p0 > 970.0f && p0 < 1060.0f) {
-                                s_cal_sum_p0 += p0;
-                                s_cal_count++;
-                            }
-                        }
-
-                        if (s_cal_count >= CAL_SAMPLES) {
-                            s_p0_hpa         = (float)(s_cal_sum_p0 / s_cal_count);
-                            s_baro_cal       = true; // KHÓA CỨNG MỐC P0 CHO TOÀN BỘ CHUYẾN ĐI!
-                            s_cal_count      = 0;
-                            s_cal_sum_p0     = 0;
-                            Serial.printf("[BARO] >>> GPS DA ON DINH (%us)! KHOA CUNG MOC P0 = %.2f hPa (sats=%u, hdop=%.2f, Alt_GPS=%.1fm) <<<\n",
-                                          s_gps_warmup_sec, s_p0_hpa, (unsigned)g_snap.gps.satellites, g_snap.gps.hdop, g_snap.gps.altitude_m);
-                        }
-                    }
-                } else {
-                    // Mất sóng khi chưa đủ 35s -> đếm lại để đảm bảo tính ổn định
-                    s_gps_warmup_sec = 0;
-                    s_cal_count = 0;
-                    s_cal_sum_p0 = 0;
-                }
-            } else {
-                // ── Bộ lọc bù trôi chậm thời tiết (Garmin Continuous Auto-Calibration) ──
-                // Mỗi 15 phút (900s), nếu GPS ngoài trời bắt nét tuyệt đối (sats >= 7, hdop <= 1.2f)
-                // So sánh Alt_GPS và Alt_Baro. Nếu lệch >= 8m do đổi thời tiết, kéo rê P0 tối đa 0.05 hPa (~0.4m)
-                static uint32_t s_last_drift_check_ms = 0;
-                if (now - s_last_drift_check_ms >= 900000) { // 15 phút = 900,000 ms
-                    s_last_drift_check_ms = now;
-                    bool gps_excellent = g_snap.gps.fix_valid && g_snap.gps.altitude_valid &&
-                                         g_snap.gps.satellites >= 7 && g_snap.gps.hdop <= 1.2f;
-                    if (gps_excellent && g_snap.baro.valid) {
-                        float alt_diff = g_snap.gps.altitude_m - g_snap.baro.altitude_m;
-                        if (fabsf(alt_diff) >= 8.0f) {
-                            float p0_nudge = (alt_diff > 0) ? 0.05f : -0.05f;
-                            s_p0_hpa += p0_nudge;
-                            Serial.printf("[BARO] >>> BU TROI THOI TIET (15p): Alt_GPS=%.1fm vs Baro=%.1fm (lech %.1fm) -> Nudge P0 to %.2f hPa <<<\n",
-                                          g_snap.gps.altitude_m, g_snap.baro.altitude_m, alt_diff, s_p0_hpa);
-                        }
-                    }
-                }
-            }
-
-            float ratio = g_snap.baro.pressure_hpa / s_p0_hpa;
-            g_snap.baro.altitude_m    = 44330.0f * (1.0f - powf(ratio, 0.1903f));
-            g_snap.baro.sea_level_hpa = s_p0_hpa;
-            g_snap.baro.calibrated    = s_baro_cal;
-            g_snap.baro.valid = true;
+            baro_fusion_update(now, bmp.pressure, bmp.temperature, &g_snap.gps, &g_snap.baro);
         } else {
             g_snap.baro.valid = false;
         }
@@ -537,16 +421,22 @@ void setup() {
     Serial.println(F("╚══════════════════════════════════════════════════╝\n"));
     Serial.flush();
 
+    Serial.printf("[SYS] Board: %s\n", BOARD_NAME);
+
     // Vô hiệu hóa thẻ SD ngay từ đầu bằng cách kéo chân CS lên HIGH
     // Đảm bảo thẻ SD không làm nhiễu bus SPI (đặc biệt là tín hiệu MISO) khi AMOLED khởi tạo
-    pinMode(15, OUTPUT);
-    digitalWrite(15, HIGH);
+#if defined(BOARD_SD_MODE_SDSPI) && BOARD_SD_MODE_SDSPI
+    pinMode(BOARD_SD_CS_PIN, OUTPUT);
+    digitalWrite(BOARD_SD_CS_PIN, HIGH);
+#endif
+
+    baro_fusion_init();
     
     // ── I2C ──────────────────────────────────────────────────────────────────
-    Serial.printf("[I2C] Init: SDA=GPIO%d  SCL=GPIO%d  100kHz\n",
-                  I2C_SDA_PIN, I2C_SCL_PIN);
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-    Wire.setClock(100000UL); // Hạ xuống 100kHz để tăng độ ổn định cho cảm biến và touch
+    Serial.printf("[I2C] Init: SDA=GPIO%d  SCL=GPIO%d  %luHz\n",
+                  BOARD_I2C_SDA_PIN, BOARD_I2C_SCL_PIN, (unsigned long)BOARD_I2C_FREQ_HZ);
+    Wire.begin(BOARD_I2C_SDA_PIN, BOARD_I2C_SCL_PIN);
+    Wire.setClock(BOARD_I2C_FREQ_HZ);
     Wire.setTimeout(20);
     delay(150);
     i2cScan();
@@ -560,9 +450,9 @@ void setup() {
     Serial.flush();
 
     // ── GPS ───────────────────────────────────────────────────────────────────
-    Serial.printf("[GPS] Init UART1: RX=GPIO%d  TX=GPIO%d  %d baud\n",
-                  GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD);
-    gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+    Serial.printf("[GPS] Init UART%d: RX=GPIO%d  TX=GPIO%d  %d baud\n",
+                  BOARD_GPS_UART_NUM, BOARD_GPS_RX_PIN, BOARD_GPS_TX_PIN, BOARD_GPS_BAUD);
+    gpsSerial.begin(BOARD_GPS_BAUD, SERIAL_8N1, BOARD_GPS_RX_PIN, BOARD_GPS_TX_PIN);
     tLastGps = millis();
     Serial.println(F("[GPS] Đang chờ NMEA data...\n"));
     Serial.flush();
@@ -579,9 +469,9 @@ void setup() {
     Serial.println(F("[SYS] Dashboard OK — swipe để chuyển trang.\n"));
     Serial.flush();
 
-    // ── MicroSD Logger & Route Nav (SPI2, CS=GPIO15) ─────────────────────────
+    // ── MicroSD Logger & Route Nav ────────────────────────────────────────────
     if (example_lvgl_lock(-1)) {
-        sd_logger_init(&g_snap);
+        track_logger_init(&g_snap);
         route_nav_init();
         if (g_snap.sys.sd_ok) {
             route_nav_autoload();
@@ -669,8 +559,8 @@ void loop() {
     static uint32_t lastBat = 0;
     if (now - lastBat >= 2000) {
         lastBat = now;
-        uint32_t mv = analogReadMilliVolts(0);
-        float volts = (mv * 2.0f) / 1000.0f;
+        uint32_t mv = analogReadMilliVolts(BOARD_BAT_ADC_PIN);
+        float volts = (mv * BOARD_BAT_ADC_DIVIDER) / 1000.0f;
         g_snap.sys.battery_v = volts;
         
         if (volts >= 4.15f) g_snap.sys.battery_pct = 100;
@@ -726,13 +616,19 @@ void loop() {
     }
 
     // ── 8. Ghi log thẻ nhớ định kỳ (mỗi 1 giây) ──────────────────────────────
-    // BẮT BUỘC khoá LVGL để không xung đột bus SPI2 với màn hình AMOLED
+    // Khóa LVGL nếu SD card dùng chung bus SPI2 với màn hình AMOLED
     static uint32_t tLastSdLog = 0;
     if (now - tLastSdLog >= 1000) {
         tLastSdLog = now;
-        if (sd_logger_is_ok() && example_lvgl_lock(-1)) {
-            sd_logger_log(&g_snap);
-            example_lvgl_unlock();
+        if (track_logger_is_ok()) {
+#if defined(BOARD_SD_SHARES_DISPLAY_BUS) && BOARD_SD_SHARES_DISPLAY_BUS
+            if (example_lvgl_lock(-1)) {
+                track_logger_log(&g_snap, now);
+                example_lvgl_unlock();
+            }
+#else
+            track_logger_log(&g_snap, now);
+#endif
         }
     }
 

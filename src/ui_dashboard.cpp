@@ -426,7 +426,8 @@ static void build_tile1_sensors(lv_obj_t *tile)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 extern SensorSnapshot g_snap;
-#include "sd_logger.h"
+#include <Arduino.h>
+#include "core/track_logger.h"
 
 static uint32_t logStartTime = 0;
 
@@ -441,7 +442,7 @@ static void dd_mode_event_cb(lv_event_t * e) {
         uint16_t selected = lv_dropdown_get_selected(dropdown);
         ActivityMode mode = (selected == 1) ? ACTIVITY_MODE_BIKE : ACTIVITY_MODE_HIKE;
         g_snap.sys.activity_mode = mode;
-        sd_logger_set_activity_mode(mode);
+        track_logger_set_activity_mode(mode);
         Serial.printf("[UI] Che do the thao doi sang: %s\n", (mode == ACTIVITY_MODE_BIKE) ? "Cycling" : "Hiking");
     }
 }
@@ -478,11 +479,11 @@ static void btn_log_event_cb(lv_event_t * e) {
         }
 
         if (g_snap.sys.is_logging_active) {
-            sd_logger_toggle(&g_snap);
+            track_logger_toggle(&g_snap, millis());
             
             float dist_m = 0;
             uint32_t dur_s = 0;
-            sd_logger_get_summary(&dist_m, &dur_s);
+            track_logger_get_summary(&dist_m, &dur_s, millis());
             
             uint32_t m = dur_s / 60;
             uint32_t s = dur_s % 60;
@@ -505,7 +506,7 @@ static void btn_log_event_cb(lv_event_t * e) {
             lv_obj_center(mbox);
         } else {
             logStartTime = millis();
-            sd_logger_toggle(&g_snap);
+            track_logger_toggle(&g_snap, millis());
             
             if (!g_snap.gps.fix_valid) {
                 static const char * btns[] = {"OK", ""};
@@ -877,7 +878,7 @@ void ui_dashboard_update(const SensorSnapshot *snap)
             if (snap->sys.is_logging_active) {
                 uint32_t pts = 0;
                 size_t buf_usage = 0;
-                sd_logger_get_stats(&pts, &buf_usage);
+                track_logger_get_stats(&pts, &buf_usage);
                 snprintf(buf, sizeof(buf), "REC: %lu pts | RAM: %u/1024B", (unsigned long)pts, (unsigned int)buf_usage);
                 lv_label_set_text(t0_lbl_sd, buf);
                 // Blink text color
