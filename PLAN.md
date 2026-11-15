@@ -371,7 +371,7 @@ Kế hoạch tái cấu trúc từ bo mạch đơn ESP32-C6 sang hỗ trợ đa 
 
 ### 3. Lộ Trình Triển Khai 5 Giai Đoạn (Đảm bảo luôn build xanh)
 - [x] **Phase 1: Tách Core Domain & Tạo Board Descriptor C6** (Rút gọn `main.cpp`, tách `baro_fusion`, `track_logger`, tạo `board_ws_c6_amoled_164.h`). ✅ HOÀN THÀNH
-- [ ] **Phase 2: Tầng Nguồn & I2C Phụ Trợ (`hal_power`, `hal_sensors`)** (Driver Wire nhẹ cho AXP2101, TCA9554, PCF85063, QMI8658, BMP580).
+- [x] **Phase 2: Tầng Nguồn & I2C Phụ Trợ (`hal_power`, `hal_sensors`)** (Driver Wire nhẹ cho AXP2101, TCA9554, PCF85063, QMI8658, BMP580). ✅ HOÀN THÀNH
 - [ ] **Phase 3: Hợp Nhất QSPI AMOLED & Cảm Ứng Đa IC (`hal_display`, `hal_touch`, `hal_storage`)** (Hỗ trợ SH8601/CO5300/RM690B0, FT3168/6336, CST8xx, CST92xx, SDMMC).
 - [ ] **Phase 4: Adaptive UI 3 Profiles** (Tách `ui_viewmodel`, xây dựng `layout_portrait`, `layout_round`, `layout_landscape`).
 - [ ] **Phase 5: Multi-Env `platformio.ini` & Compile Matrix Test** (Cấu hình 6 environment và chạy kiểm tra biên dịch đồng loạt).
