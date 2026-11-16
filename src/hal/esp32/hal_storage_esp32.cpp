@@ -10,8 +10,13 @@
 #include <sys/stat.h>
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
-#include "driver/sdspi_host.h"
 #include "driver/gpio.h"
+
+#if defined(BOARD_SD_MODE_SDSPI) && BOARD_SD_MODE_SDSPI
+#  include "driver/sdspi_host.h"
+#elif defined(BOARD_SD_MODE_SDMMC) && BOARD_SD_MODE_SDMMC
+#  include "driver/sdmmc_host.h"
+#endif
 
 #define SD_MOUNT_POINT "/sdcard"
 
@@ -23,15 +28,15 @@ bool hal_storage_init(uint32_t *out_capacity_mb) {
     s_sd_ready    = false;
     s_capacity_mb = 0;
 
-#if defined(BOARD_SD_MODE_SDSPI) && BOARD_SD_MODE_SDSPI
-    Serial.printf("[SD] Khoi tao the nho MicroSD (SDSPI, CS=GPIO%d)...\n", BOARD_SD_CS_PIN);
-
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed   = false,
         .max_files                = 4,
         .allocation_unit_size     = 16 * 1024,
         .disk_status_check_enable = false
     };
+
+#if defined(BOARD_SD_MODE_SDSPI) && BOARD_SD_MODE_SDSPI
+    Serial.printf("[SD] Khoi tao the nho MicroSD (SDSPI, CS=GPIO%d)...\n", BOARD_SD_CS_PIN);
 
     gpio_set_pull_mode((gpio_num_t)BOARD_SD_MOSI_PIN, GPIO_PULLUP_ONLY);
     gpio_set_pull_mode((gpio_num_t)BOARD_SD_MISO_PIN, GPIO_PULLUP_ONLY);
@@ -57,9 +62,35 @@ bool hal_storage_init(uint32_t *out_capacity_mb) {
     s_capacity_mb = (uint32_t)((float)s_card->csd.capacity / 2048.0f);
     Serial.printf("[SD] Nhan dien the nho: %s | Dung luong: %lu MB\n",
                   s_card->cid.name, (unsigned long)s_capacity_mb);
+
+#elif defined(BOARD_SD_MODE_SDMMC) && BOARD_SD_MODE_SDMMC
+    Serial.printf("[SD] Khoi tao the nho MicroSD (SDMMC 1-bit, CLK=%d CMD=%d D0=%d)...\n",
+                  BOARD_SD_CLK_PIN, BOARD_SD_CMD_PIN, BOARD_SD_D0_PIN);
+
+    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+    host.flags        = SDMMC_HOST_FLAG_1BIT;
+    host.max_freq_khz = BOARD_SD_MAX_FREQ_KHZ;
+
+    sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
+    slot_config.width = 1;
+    slot_config.clk   = (gpio_num_t)BOARD_SD_CLK_PIN;
+    slot_config.cmd   = (gpio_num_t)BOARD_SD_CMD_PIN;
+    slot_config.d0    = (gpio_num_t)BOARD_SD_D0_PIN;
+    slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+
+    esp_err_t ret = esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT, &host, &slot_config, &mount_config, &s_card);
+    if (ret != ESP_OK) {
+        Serial.printf("[SD] SDMMC mount that bai (ma loi: 0x%x).\n", ret);
+        if (out_capacity_mb) *out_capacity_mb = 0;
+        return false;
+    }
+
+    s_sd_ready    = true;
+    s_capacity_mb = (uint32_t)((float)s_card->csd.capacity / 2048.0f);
+    Serial.printf("[SD] SDMMC OK: %s | Dung luong: %lu MB\n",
+                  s_card->cid.name, (unsigned long)s_capacity_mb);
 #else
-    // SDMMC backend will be added in Phase 3 for ESP32-S3 boards
-    Serial.println(F("[SD] SDMMC backend chua duoc kich hoat."));
+    Serial.println(F("[SD] Chua cau hinh che do SD cho bo mach nay."));
     if (out_capacity_mb) *out_capacity_mb = 0;
     return false;
 #endif

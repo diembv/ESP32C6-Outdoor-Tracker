@@ -17,8 +17,7 @@
 #include "hal/hal_i2c.h"
 #include "hal/hal_power.h"
 #include "hal/hal_sensors.h"
-#include "lcd_bsp.h"
-#include "lcd_config.h"
+#include "hal/hal_display.h"
 #include "ui_dashboard.h"
 #include "core/baro_fusion.h"
 #include "core/track_logger.h"
@@ -165,27 +164,27 @@ void setup() {
     tLastGps = millis();
     Serial.flush();
 
-    // ── Display + LVGL (BSP: FreeRTOS LVGL task) ─────────────────────────────
+    // ── Display + LVGL (Unified QSPI HAL) ────────────────────────────────────
     Serial.println(F("[SYS] Khởi tạo AMOLED + LVGL..."));
-    lcd_lvgl_Init();
+    hal_display_init();
 
     // ── Build Dashboard UI ────────────────────────────────────────────────────
-    if (example_lvgl_lock(-1)) {
+    if (hal_display_lock(-1)) {
         ui_dashboard_init();
-        example_lvgl_unlock();
+        hal_display_unlock();
     }
     Serial.println(F("[SYS] Dashboard OK — swipe để chuyển trang.\n"));
     Serial.flush();
 
     // ── MicroSD Logger & Route Nav ────────────────────────────────────────────
-    if (example_lvgl_lock(-1)) {
+    if (hal_display_lock(-1)) {
         track_logger_init(&g_snap);
         route_nav_init();
         if (g_snap.sys.sd_ok) {
             route_nav_autoload();
         }
-        set_amoled_backlight(180);
-        example_lvgl_unlock();
+        hal_display_set_brightness(180);
+        hal_display_unlock();
     }
     Serial.flush();
 
@@ -216,13 +215,13 @@ void loop() {
             btn_press_start = now;
         } else if (!btn_handled && (now - btn_press_start >= 1200)) {
             btn_handled = true;
-            if (example_lvgl_lock(-1)) {
+            if (hal_display_lock(-1)) {
                 isScreenOn = !isScreenOn;
-                set_amoled_backlight(isScreenOn ? 180 : 0);
+                hal_display_set_brightness(isScreenOn ? 180 : 0);
                 if (isScreenOn) {
                     lv_disp_trig_activity(NULL);
                 }
-                example_lvgl_unlock();
+                hal_display_unlock();
                 Serial.printf("[PWR] Giữ nút BOOT > 1200ms -> Màn hình: %s\n", isScreenOn ? "BAT" : "TAT");
             }
         }
@@ -236,14 +235,14 @@ void loop() {
         static uint32_t last_touch_wake_check = 0;
         if (now - last_touch_wake_check >= 100) {
             last_touch_wake_check = now;
-            if (example_lvgl_lock(-1)) {
+            if (hal_display_lock(-1)) {
                 uint32_t inactive_ms = lv_disp_get_inactive_time(NULL);
                 if (inactive_ms < 150) {
                     isScreenOn = true;
-                    set_amoled_backlight(180);
+                    hal_display_set_brightness(180);
                     Serial.println(F("[PWR] Chạm màn hình -> Bật sáng lại!"));
                 }
-                example_lvgl_unlock();
+                hal_display_unlock();
             }
         }
 
@@ -251,11 +250,11 @@ void loop() {
         if (g_snap.imu.valid) {
             if (abs(g_snap.imu.pitch_deg - lastPitch) > 25.0f ||
                 abs(g_snap.imu.roll_deg - lastRoll) > 25.0f) {
-                if (example_lvgl_lock(-1)) {
+                if (hal_display_lock(-1)) {
                     isScreenOn = true;
-                    set_amoled_backlight(180);
+                    hal_display_set_brightness(180);
                     lv_disp_trig_activity(NULL);
-                    example_lvgl_unlock();
+                    hal_display_unlock();
                     Serial.println(F("[PWR] Chuyển động mạnh -> Bật sáng màn hình!"));
                 }
             }
@@ -288,7 +287,7 @@ void loop() {
         static uint32_t lastSlowRead = 0;
         bool doSlowRead = (now - lastSlowRead >= 1000) || (lastSlowRead == 0);
 
-        if (example_lvgl_lock(-1)) {
+        if (hal_display_lock(-1)) {
             hal_sensors_read_fast(&g_snap);
             if (doSlowRead) {
                 lastSlowRead = now;
@@ -297,16 +296,16 @@ void loop() {
             if (g_snap.gps.fix_valid) {
                 route_nav_update(g_snap.gps.latitude, g_snap.gps.longitude, g_snap.gps.speed_kmh);
             }
-            example_lvgl_unlock();
+            hal_display_unlock();
         }
     }
 
     // ── 6. Update LVGL UI mỗi 500ms (chỉ khi màn hình đang bật) ──────────────
     if (isScreenOn && (now - tLastUiUpd >= UI_UPDATE_MS)) {
         tLastUiUpd = now;
-        if (example_lvgl_lock(-1)) {
+        if (hal_display_lock(-1)) {
             ui_dashboard_update(&g_snap);
-            example_lvgl_unlock();
+            hal_display_unlock();
         }
     }
 
@@ -314,9 +313,9 @@ void loop() {
     if (now - tLastPrint >= SERIAL_PRINT_MS) {
         tLastPrint = now;
         if (printCount++ % I2C_RETRY_EVERY == 0) {
-            if (example_lvgl_lock(-1)) {
+            if (hal_display_lock(-1)) {
                 hal_sensors_retry_i2c();
-                example_lvgl_unlock();
+                hal_display_unlock();
             }
         }
         printSerial();
@@ -329,9 +328,9 @@ void loop() {
         tLastSdLog = now;
         if (track_logger_is_ok()) {
 #if defined(BOARD_SD_SHARES_DISPLAY_BUS) && BOARD_SD_SHARES_DISPLAY_BUS
-            if (example_lvgl_lock(-1)) {
+            if (hal_display_lock(-1)) {
                 track_logger_log(&g_snap, now);
-                example_lvgl_unlock();
+                hal_display_unlock();
             }
 #else
             track_logger_log(&g_snap, now);
