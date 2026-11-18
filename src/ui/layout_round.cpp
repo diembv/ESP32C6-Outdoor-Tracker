@@ -170,22 +170,59 @@ static void build_round_tile2_system(lv_obj_t *tile, UiWidgets *w)
 
     make_round_divider(tile, 82);
 
-    // Calib Button (Safe width 76%)
-    w->t2_btn_calib = lv_btn_create(tile);
-    lv_obj_set_size(w->t2_btn_calib, lv_pct(72), 42);
+    // Utility Row (Safe width 78%)
+    lv_obj_t *util_row = make_centered_row(tile, 78, 6);
+
+    w->t2_btn_calib = lv_btn_create(util_row);
+    lv_obj_set_height(w->t2_btn_calib, 40);
+    lv_obj_set_flex_grow(w->t2_btn_calib, 2);
     lv_obj_clear_flag(w->t2_btn_calib, LV_OBJ_FLAG_SCROLL_CHAIN);
     lv_obj_set_style_bg_color(w->t2_btn_calib, lv_color_hex(0x1F2937), 0);
     lv_obj_set_style_border_color(w->t2_btn_calib, CLR_ACCENT, 0);
     lv_obj_set_style_border_width(w->t2_btn_calib, 1, 0);
-    lv_obj_set_style_radius(w->t2_btn_calib, 21, 0);
+    lv_obj_set_style_radius(w->t2_btn_calib, 20, 0);
     lv_obj_add_event_cb(w->t2_btn_calib, ui_vm_btn_calib_cb, LV_EVENT_CLICKED, w);
 
     lv_obj_t *lbl_calib = lv_label_create(w->t2_btn_calib);
-    lv_label_set_text(lbl_calib, LV_SYMBOL_REFRESH " CALIB ALT");
-    lv_obj_set_style_text_font(lbl_calib, f->sm, 0);
+    lv_label_set_text(lbl_calib, LV_SYMBOL_REFRESH " CALIB");
+    lv_obj_set_style_text_font(lbl_calib, f->xs, 0);
     lv_obj_set_style_text_color(lbl_calib, CLR_ACCENT, 0);
     lv_obj_clear_flag(lbl_calib, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_center(lbl_calib);
+
+    w->t2_btn_wifi = lv_btn_create(util_row);
+    lv_obj_set_height(w->t2_btn_wifi, 40);
+    lv_obj_set_flex_grow(w->t2_btn_wifi, 1);
+    lv_obj_clear_flag(w->t2_btn_wifi, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_set_style_bg_color(w->t2_btn_wifi, lv_color_hex(0x1F2937), 0);
+    lv_obj_set_style_border_color(w->t2_btn_wifi, CLR_BORDER, 0);
+    lv_obj_set_style_border_width(w->t2_btn_wifi, 1, 0);
+    lv_obj_set_style_radius(w->t2_btn_wifi, 20, 0);
+    lv_obj_add_event_cb(w->t2_btn_wifi, ui_vm_btn_wifi_cb, LV_EVENT_CLICKED, w);
+
+    w->t2_lbl_btn_wifi = lv_label_create(w->t2_btn_wifi);
+    lv_label_set_text(w->t2_lbl_btn_wifi, LV_SYMBOL_WIFI " WIFI");
+    lv_obj_set_style_text_font(w->t2_lbl_btn_wifi, f->xs, 0);
+    lv_obj_set_style_text_color(w->t2_lbl_btn_wifi, CLR_WHITE, 0);
+    lv_obj_clear_flag(w->t2_lbl_btn_wifi, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(w->t2_lbl_btn_wifi);
+
+    w->t2_btn_ble = lv_btn_create(util_row);
+    lv_obj_set_height(w->t2_btn_ble, 40);
+    lv_obj_set_flex_grow(w->t2_btn_ble, 1);
+    lv_obj_clear_flag(w->t2_btn_ble, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_set_style_bg_color(w->t2_btn_ble, lv_color_hex(0x1F2937), 0);
+    lv_obj_set_style_border_color(w->t2_btn_ble, CLR_BORDER, 0);
+    lv_obj_set_style_border_width(w->t2_btn_ble, 1, 0);
+    lv_obj_set_style_radius(w->t2_btn_ble, 20, 0);
+    lv_obj_add_event_cb(w->t2_btn_ble, ui_vm_btn_ble_cb, LV_EVENT_CLICKED, w);
+
+    w->t2_lbl_btn_ble = lv_label_create(w->t2_btn_ble);
+    lv_label_set_text(w->t2_lbl_btn_ble, LV_SYMBOL_BLUETOOTH " BLE");
+    lv_obj_set_style_text_font(w->t2_lbl_btn_ble, f->xs, 0);
+    lv_obj_set_style_text_color(w->t2_lbl_btn_ble, CLR_WHITE, 0);
+    lv_obj_clear_flag(w->t2_lbl_btn_ble, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(w->t2_lbl_btn_ble);
 
     // Bottom Safe-Area Controls (64% width)
     lv_obj_t *bot = make_centered_row(tile, 64, 8);

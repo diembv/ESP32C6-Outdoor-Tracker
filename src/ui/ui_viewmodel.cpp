@@ -7,6 +7,8 @@
 #include "ui/ui_theme.h"
 #include "core/baro_fusion.h"
 #include "core/track_logger.h"
+#include "connectivity/wifi_sync.h"
+#include "connectivity/ble_service.h"
 #include "route_nav.h"
 #include <Arduino.h>
 #include <stdio.h>
@@ -488,4 +490,25 @@ void ui_vm_btn_log_cb(lv_event_t *e)
             lv_obj_center(mbox);
         }
     }
+}
+
+void ui_vm_btn_wifi_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    bool active = wifi_sync_toggle();
+    if (active) {
+        static const char *btns[] = {"OK", ""};
+        char msg[128];
+        snprintf(msg, sizeof(msg), "SSID: %s\nURL: http://192.168.4.1\nAuto-off in 5 min.",
+                 wifi_sync_get_ssid());
+        lv_obj_t *mbox = lv_msgbox_create(NULL, "WIFI SYNC ON", msg, btns, false);
+        lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        lv_obj_center(mbox);
+    }
+}
+
+void ui_vm_btn_ble_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    ble_service_toggle();
 }

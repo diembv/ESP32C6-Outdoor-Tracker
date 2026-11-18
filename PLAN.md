@@ -333,20 +333,20 @@ Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 
 
 ---
 
-## [ ] Milestone 7 — Kết Nối Điện Thoại Hybrid (Wi-Fi Sync Web UI & NimBLE)
+## [x] Milestone 7 — Kết Nối Điện Thoại Hybrid (Wi-Fi Sync Web UI & NimBLE) ✅ HOÀN THÀNH
 > 📄 **Tài liệu kiến trúc & hợp đồng giao thức chi tiết:** Xem [DOCS_COMPANION_APP_PLAN.md](file:///home/antigravity/diembv/ESP32C6-Outdoor-Tracker/DOCS_COMPANION_APP_PLAN.md)
 
 Thiết kế theo cơ chế **On-Demand (chỉ bật khi người dùng kích hoạt trên trang System)** để bảo toàn thời lượng pin đi rừng và tránh xung đột bộ nhớ RAM trên ESP32-C6 (512KB SRAM, không PSRAM).
 
-- [ ] **Chế độ 1: Wi-Fi Hotspot Sync (`192.168.4.1` — Ưu tiên số 1, chạy mọi iOS/Android không cần cài App):**
-  - Phát Wi-Fi AP tạm thời (`OutdoorTracker-XXXX`), tự động tắt sau 5 phút không có kết nối.
+- [x] **Chế độ 1: Wi-Fi Hotspot Sync (`192.168.4.1` — Ưu tiên số 1, chạy mọi iOS/Android không cần cài App):**
+  - Phát Wi-Fi AP tạm thời (`OutdoorTracker-XXXX`), tự động tắt sau 5 phút không có kết nối (`src/connectivity/wifi_sync.cpp`, `include/web_portal_gz.h` 4KB gzipped).
   - **Quản lý Track Log trên trình duyệt:** Liệt kê `/sdcard/logs/*.csv`, tải trực tiếp hoặc tự động chuyển đổi `.csv` $\rightarrow$ `.gpx` chuẩn quốc tế ngay bằng JavaScript trên trình duyệt điện thoại để tải lên Strava / Garmin Connect.
-  - **Nạp Lộ Trình GPX Trực Tiếp Từ Điện Thoại:** Chọn file `.gpx` bất kỳ trên điện thoại $\rightarrow$ JavaScript tự chạy thuật toán nén **Ramer-Douglas-Peucker (RDP)** thành định dạng nhị phân `.bin` (8 bytes/điểm) $\rightarrow$ upload thẳng vào `/sdcard/routes/active.bin` và gọi `route_nav_autoload()` ngay lập tức (không cần máy tính hay chạy script Python).
+  - **Nạp Lộ Trình GPX Trực Tiếp Từ Điện Thoại:** Chọn file `.gpx` bất kỳ trên điện thoại $\rightarrow$ JavaScript tự chạy thuật toán nén **Ramer-Douglas-Peucker (RDP)** thành định dạng nhị phân `.bin` (8 bytes/điểm) $\rightarrow$ upload thẳng vào `/sdcard/routes/active.bin` và gọi `route_nav_load_file()` ngay lập tức.
   - **An toàn Bus SPI:** Tự động bọc các lệnh đọc/ghi thẻ nhớ trong `hal_display_lock()` khi `BOARD_SD_SHARES_DISPLAY_BUS == 1`.
-- [ ] **Chế độ 2: Bluetooth Low Energy (`NimBLE` Siêu Nhẹ):**
-  - Dùng thư viện `NimBLE-Arduino` (tiết kiệm ~60% RAM so với Bluedroid).
-  - **GATT Telemetry (`NOTIFY` 1Hz):** Truyền gói tin nhị phân 36 bytes (`lat`, `lon`, `alt`, `speed`, `sats`, `bat_pct`, `rec_state`) sang Web BLE PWA.
-  - **GATT Remote Control (`WRITE`):** Bấm Start/Stop Log, Calib độ cao, chuyển chế độ Hiking/Cycling và cài đặt thông số nhóm (`team_id`, `member_name`) từ điện thoại.
+- [x] **Chế độ 2: Bluetooth Low Energy (`NimBLE` Siêu Nhẹ):**
+  - Dùng thư viện `NimBLE-Arduino` (`src/connectivity/ble_service.cpp`).
+  - **GATT Telemetry (`NOTIFY` 1Hz):** Truyền gói tin nhị phân 32 bytes (`lat_e7`, `lon_e7`, `alt_dm`, `speed_cms`, `sats`, `bat_pct`, `flags`, `uptime_s`) sang Web BLE PWA.
+  - **GATT Remote Control (`WRITE`):** Bấm Start/Stop Log, Calib độ cao, chuyển chế độ Hiking/Cycling, cài đặt thông số nhóm (`team_id`, `callsign` qua `team_config.cpp` NVS), và SOS.
 
 ---
 

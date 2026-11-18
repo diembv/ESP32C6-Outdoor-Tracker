@@ -37,6 +37,10 @@ typedef struct {
     lv_obj_t *t2_lbl_battery;
     lv_obj_t *t2_lbl_sd;
     lv_obj_t *t2_btn_calib;
+    lv_obj_t *t2_btn_wifi;
+    lv_obj_t *t2_lbl_btn_wifi;
+    lv_obj_t *t2_btn_ble;
+    lv_obj_t *t2_lbl_btn_ble;
     lv_obj_t *t2_dd_mode;
     lv_obj_t *t2_btn_log;
     lv_obj_t *t2_lbl_btn_log;

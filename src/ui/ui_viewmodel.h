@@ -36,6 +36,8 @@ typedef struct {
     lv_color_t sd_color;
     bool       is_logging_active;
     bool       blink_on;
+    bool       wifi_active;
+    bool       ble_active;
 } UiViewModel;
 
 /**
@@ -51,3 +53,5 @@ void ui_vm_map_draw_cb(lv_event_t *e);
 void ui_vm_dd_mode_cb(lv_event_t *e);
 void ui_vm_btn_calib_cb(lv_event_t *e);
 void ui_vm_btn_log_cb(lv_event_t *e);
+void ui_vm_btn_wifi_cb(lv_event_t *e);
+void ui_vm_btn_ble_cb(lv_event_t *e);

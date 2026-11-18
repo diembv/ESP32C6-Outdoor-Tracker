@@ -60,6 +60,14 @@ typedef enum {
 } ActivityMode;
 
 typedef struct {
+    bool     enabled;
+    uint16_t team_id;
+    uint8_t  node_id;
+    char     callsign[7];   // 6 chars + null
+    uint16_t alert_dist_m;
+} TeamConfig;
+
+typedef struct {
     uint32_t     uptime_s;          // System uptime in seconds
     float        battery_v;         // Battery voltage (V)
     uint8_t      battery_pct;       // Battery percentage (0-100)
@@ -70,6 +78,9 @@ typedef struct {
     ActivityMode activity_mode;     // HIKE or BIKE
     uint32_t     boot_count;        // Boot counter persisted across soft resets
     const char  *reset_reason;      // Last reset reason string
+    bool         wifi_sync_active;  // On-Demand Wi-Fi AP active
+    bool         ble_active;        // On-Demand NimBLE GATT active
+    bool         sos_active;        // Emergency SOS flag
 } SysData;
 
 typedef struct {

@@ -21,6 +21,9 @@
 #include "ui/ui_dashboard.h"
 #include "core/baro_fusion.h"
 #include "core/track_logger.h"
+#include "core/team_config.h"
+#include "connectivity/wifi_sync.h"
+#include "connectivity/ble_service.h"
 #include "route_nav.h"
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -338,6 +341,10 @@ void loop() {
         }
     }
 
-    // ── 9. Nhường CPU cho FreeRTOS task khác ─────────────────────────────────
+    // ── 9. On-Demand Connectivity (Wi-Fi Sync & NimBLE) ──────────────────────
+    wifi_sync_loop();
+    ble_service_loop();
+
+    // ── 10. Nhường CPU cho FreeRTOS task khác ────────────────────────────────
     delay(5);
 }

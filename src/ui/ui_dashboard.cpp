@@ -98,5 +98,18 @@ void ui_dashboard_update(const SensorSnapshot *snap)
             lv_obj_set_style_bg_color(s_widgets.t2_btn_log,
                                       vm.blink_on ? CLR_RED : lv_color_hex(0x8B0000), 0);
         }
+
+        if (s_widgets.t2_btn_wifi && s_widgets.t2_lbl_btn_wifi) {
+            lv_obj_set_style_bg_color(s_widgets.t2_btn_wifi,
+                                      vm.wifi_active ? lv_color_hex(0x0369A1) : lv_color_hex(0x1F2937), 0);
+            lv_label_set_text(s_widgets.t2_lbl_btn_wifi,
+                              vm.wifi_active ? LV_SYMBOL_WIFI " ON" : LV_SYMBOL_WIFI " WIFI");
+        }
+        if (s_widgets.t2_btn_ble && s_widgets.t2_lbl_btn_ble) {
+            lv_obj_set_style_bg_color(s_widgets.t2_btn_ble,
+                                      vm.ble_active ? lv_color_hex(0x065F46) : lv_color_hex(0x1F2937), 0);
+            lv_label_set_text(s_widgets.t2_lbl_btn_ble,
+                              vm.ble_active ? LV_SYMBOL_BLUETOOTH " ON" : LV_SYMBOL_BLUETOOTH " BLE");
+        }
     }
 }
