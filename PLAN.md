@@ -334,6 +334,8 @@ Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 
 ---
 
 ## [ ] Milestone 7 — Kết Nối Điện Thoại Hybrid (Wi-Fi Sync Web UI & NimBLE)
+> 📄 **Tài liệu kiến trúc & hợp đồng giao thức chi tiết:** Xem [DOCS_COMPANION_APP_PLAN.md](file:///home/antigravity/diembv/ESP32C6-Outdoor-Tracker/DOCS_COMPANION_APP_PLAN.md)
+
 Thiết kế theo cơ chế **On-Demand (chỉ bật khi người dùng kích hoạt trên trang System)** để bảo toàn thời lượng pin đi rừng và tránh xung đột bộ nhớ RAM trên ESP32-C6 (512KB SRAM, không PSRAM).
 
 - [ ] **Chế độ 1: Wi-Fi Hotspot Sync (`192.168.4.1` — Ưu tiên số 1, chạy mọi iOS/Android không cần cài App):**
