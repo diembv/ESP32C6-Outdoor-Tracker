@@ -333,12 +333,18 @@ Board tích hợp sẵn khe cắm thẻ nhớ TF (MicroSD) dùng chung bus SPI2 
 
 ---
 
-## [ ] Milestone 7 — Web App Kết nối & Truyền dữ liệu (BLE / Wi-Fi)
-- [ ] **Web BLE Dashboard (PWA):**
-  - Kết nối qua Bluetooth Web API từ trình duyệt điện thoại để xem dữ liệu thời gian thực.
-  - Tải file nhị phân lộ trình từ điện thoại bắn sang thẻ nhớ ESP32-C6.
-- [ ] **Wi-Fi Hotspot Mode (Trích xuất dữ liệu nhanh):**
-  - Kích hoạt Web Server tạm thời để tải toàn bộ file CSV từ thẻ MicroSD về điện thoại.
+## [ ] Milestone 7 — Kết Nối Điện Thoại Hybrid (Wi-Fi Sync Web UI & NimBLE)
+Thiết kế theo cơ chế **On-Demand (chỉ bật khi người dùng kích hoạt trên trang System)** để bảo toàn thời lượng pin đi rừng và tránh xung đột bộ nhớ RAM trên ESP32-C6 (512KB SRAM, không PSRAM).
+
+- [ ] **Chế độ 1: Wi-Fi Hotspot Sync (`192.168.4.1` — Ưu tiên số 1, chạy mọi iOS/Android không cần cài App):**
+  - Phát Wi-Fi AP tạm thời (`OutdoorTracker-XXXX`), tự động tắt sau 5 phút không có kết nối.
+  - **Quản lý Track Log trên trình duyệt:** Liệt kê `/sdcard/logs/*.csv`, tải trực tiếp hoặc tự động chuyển đổi `.csv` $\rightarrow$ `.gpx` chuẩn quốc tế ngay bằng JavaScript trên trình duyệt điện thoại để tải lên Strava / Garmin Connect.
+  - **Nạp Lộ Trình GPX Trực Tiếp Từ Điện Thoại:** Chọn file `.gpx` bất kỳ trên điện thoại $\rightarrow$ JavaScript tự chạy thuật toán nén **Ramer-Douglas-Peucker (RDP)** thành định dạng nhị phân `.bin` (8 bytes/điểm) $\rightarrow$ upload thẳng vào `/sdcard/routes/active.bin` và gọi `route_nav_autoload()` ngay lập tức (không cần máy tính hay chạy script Python).
+  - **An toàn Bus SPI:** Tự động bọc các lệnh đọc/ghi thẻ nhớ trong `hal_display_lock()` khi `BOARD_SD_SHARES_DISPLAY_BUS == 1`.
+- [ ] **Chế độ 2: Bluetooth Low Energy (`NimBLE` Siêu Nhẹ):**
+  - Dùng thư viện `NimBLE-Arduino` (tiết kiệm ~60% RAM so với Bluedroid).
+  - **GATT Telemetry (`NOTIFY` 1Hz):** Truyền gói tin nhị phân 36 bytes (`lat`, `lon`, `alt`, `speed`, `sats`, `bat_pct`, `rec_state`) sang Web BLE PWA.
+  - **GATT Remote Control (`WRITE`):** Bấm Start/Stop Log, Calib độ cao, chuyển chế độ Hiking/Cycling và cài đặt thông số nhóm (`team_id`, `member_name`) từ điện thoại.
 
 ---
 
@@ -378,14 +384,67 @@ Kế hoạch tái cấu trúc từ bo mạch đơn ESP32-C6 sang hỗ trợ đa 
 
 ---
 
+## [ ] Milestone 9 — Team Beacon Offline (Ghép Đội Trekking Trực Tiếp Trên Thiết Bị)
+
+Định vị đồng đội thời gian thực ngay trên màn hình Radar Breadcrumb khi đi rừng **không có sóng 4G và không cần rút điện thoại**, đồng thời tách bạch phần quản lý nhóm/bản đồ nền nặng sang Web App riêng.
+
+### 1. Phân Tách Trách Nhiệm Hợp Lý (Firmware vs. Companion Web App)
+- **Trên Firmware Thiết Bị (`src/core/team_beacon.cpp` + `include/hal/hal_radio.h`):**
+  - Thu phát tọa độ, độ cao khí áp và trạng thái an toàn giữa các thiết bị trong đoàn (tối đa **8 thành viên / nhóm**).
+  - Hiển thị vị trí, hướng, khoảng cách 2D và **chênh lệch độ cao ($\Delta h$)** của từng đồng đội ngay trên mặt bản đồ Radar (Tile 0).
+  - Phát hiện và cảnh báo tức thời: **Tách đoàn (Rớt lại phía sau)**, **Đứng yên bất thường (Man-Down)**, và **Tín hiệu cầu cứu SOS**.
+- **Trên Web App / Điện Thoại (Chỉ dùng trước chuyến đi hoặc tại lán nghỉ):**
+  - Đặt tên hiển thị ngắn (tối đa 6 ký tự, VD: `DIEM`, `LEADER`, `CHOT`), chọn mã PIN nhóm (`team_id`) và ngưỡng cảnh báo khoảng cách thông qua trang cấu hình Wi-Fi Sync / BLE.
+
+### 2. Giao Thức Truyền Thông 2 Cấp (`hal_radio`)
+- [ ] **Cấp 1 — ESP-NOW 2.4GHz Long-Range (Mặc định, 0đ chi phí phần cứng thêm):**
+  - Tận dụng phần cứng radio 2.4GHz có sẵn trên cả **ESP32-C6** và **ESP32-S3** ở chế độ **Connectionless Broadcast** kèm cờ `WIFI_PROTOCOL_LR` (Espressif Long-Range mode, đạt tầm ~150–400m trong rừng).
+  - **Bật/Tắt Radio Theo Nhịp (Duty-Cycled Burst):** Không giữ Wi-Fi bật liên tục gây hao pin. Mỗi **5 giây** (hoặc **2 giây** khi có SOS), thiết bị chỉ đánh thức radio trong ~15ms để phát gói tin và lắng nghe cửa sổ đồng bộ ngắn, giữ mức tiêu thụ điện tăng thêm $< 3\text{ mA}$.
+  - **Chuyển Tiếp 1 Chặng Thông Minh (1-Hop Smart Relay):** Khi đoàn đi theo hàng dọc qua khúc cua khuất núi (Người dẫn đầu $\leftrightarrow$ Người giữa $\leftrightarrow$ Người chốt đoàn), thiết bị ở giữa tự động lặp lại (relay) gói tin có `hop_count == 0` thành `hop_count = 1` (chống lặp vô hạn bằng bộ nhớ đệm `(node_id, seq_num)`), giúp **nhân đôi tầm phủ sóng dọc đường mòn** mà không gây nghẽn kênh.
+- [ ] **Cấp 2 — LoRa Sub-GHz Mở Rộng (`SX1262` 433/868/915MHz — Tùy chọn nâng cao):**
+  - Thực thi cùng interface `hal_radio.h`. Khi gắn thêm module LoRa nhỏ qua SPI/UART, cự ly ghép đội xuyên rừng rậm và thung lũng tăng lên **2–8 km** mà không cần sửa một dòng code nào ở tầng `team_beacon` hay UI.
+
+### 3. Khung Gói Tin Nhị Phân Siêu Gọn (`TeamBeaconPacket` — 28 Bytes Packed)
+```c
+typedef struct __attribute__((packed)) {
+    uint16_t magic;        // 0x5442 ("TB")
+    uint16_t team_id;      // Mã PIN nhóm (VD: 1024) - lọc nhiễu từ đoàn khác
+    uint8_t  node_id;      // ID ngắn (1..8) rút trích từ MAC address
+    uint8_t  seq_and_hop;  // [7:2] seq_num (0..63), [1:0] hop_count (0..1)
+    uint8_t  flags;        // BIT0: SOS | BIT1: LOW_BAT | BIT2: STATIONARY | BIT3: GPS_VALID
+    char     callsign[6];  // Tên ngắn không null-term (VD: "DIEM  ", "PORTER")
+    int32_t  lat_e7;       // Vĩ độ * 1e7 (độ phân giải ~1.1 cm, 4 bytes)
+    int32_t  lon_e7;       // Kinh độ * 1e7 (4 bytes)
+    int16_t  alt_m;        // Độ cao Baro đã hiệu chuẩn (m, -1000..+9000m)
+    uint8_t  bat_pct;      // Phần trăm pin (0..100%)
+    uint8_t  course_div2;  // Hướng di chuyển (0..179 -> 0..358 độ)
+    uint16_t crc16;        // Checksum chống nhiễu gói tin RF
+} TeamBeaconPacket;        // Tổng: đúng 28 bytes
+```
+
+### 4. Hiển Thị Trên Bản Đồ Radar & 3 Cơ Chế An Toàn Thực Chiến
+- [ ] **Quản lý bộ nhớ tĩnh (`PeerTable` < 320 Bytes RAM):**
+  - Lưu tối đa 8 đồng đội trong mảng tĩnh `PeerNode s_peers[8]`, hoàn toàn không dùng `malloc`/heap, chạy nhẹ nhàng trên ESP32-C6.
+- [ ] **Vẽ Đồng Đội Trực Tiếp Trên Mặt Radar (`LV_EVENT_DRAW_MAIN` — 0 KB RAM Canvas):**
+  - Dùng chính hàm [`route_nav_project_to_screen`](file:///home/antigravity/diembv/ESP32C6-Outdoor-Tracker/src/route_nav.cpp#L323) để chiếu tọa độ đồng đội lên màn hình theo tâm là vị trí của mình.
+  - Hiển thị chấm màu riêng biệt + tên ngắn + **độ chênh cao độ $\Delta h$** (VD: `NAM +42m` nghĩa là Nam đang ở cao hơn mình 42m trên dốc; `HUY -18m` là Huy đang ở dưới dốc 18m — cực kỳ hữu ích khi leo núi nhiều tầng dốc).
+  - **Off-Screen Edge Pointer:** Nếu đồng đội vượt ra ngoài khung Zoom hiện tại, ghim một tam giác nhỏ sát mép vòng tròn Radar chỉ đúng góc phương vị kèm khoảng cách (`"340m"`).
+  - **Last Known Position (Vị trí cuối cùng):** Khi mất sóng đồng đội $> 30\text{s}$, đổi chấm sang màu xám kèm thời gian trễ (`"NAM (2p)"`) để cả đoàn biết điểm xuất hiện cuối cùng trên đường mòn.
+- [ ] **3 Cảnh Báo An Toàn Tự Động:**
+  1. **Cảnh báo Rớt Đoàn (Separation Alert):** Khi khoảng cách tới thành viên xa nhất vượt ngưỡng (mặc định `250m`) hoặc mất gói tin $> 90\text{s}$ $\rightarrow$ nháy viền vàng trên màn hình kèm cự ly & hướng.
+  2. **Cảnh báo Đứng Yên Lâu (Stationary / Man-Down):** Nếu 1 máy có tốc độ $\approx 0$ và $\Delta h < 1\text{m}$ suốt 10 phút trong khi mình vẫn đang di chuyển $\rightarrow$ tự bật cờ `STATIONARY` nhắc trưởng đoàn kiểm tra.
+  3. **Báo Động SOS Khẩn Cấp Toàn Đoàn:** Giữ nút SOS trên màn hình 3 giây $\rightarrow$ phát liên tục gói tin `SOS` (được mọi máy trong đoàn ưu tiên relay). Màn hình tất cả máy khác tự động bật sáng và bung giao diện **La Bàn Cứu Hộ** chỉ thẳng hướng, khoảng cách 2D và độ chênh cao độ $\Delta h$ tới người phát SOS.
+
+---
+
 ## Ý Tưởng Phát Triển Tương Lai
 
 | Tính năng | Mô tả |
 |---|---|
 | 🗺️ Bản đồ offline | Đọc tiles OpenStreetMap từ Micro SD |
 | 📍 Waypoints | Lưu và điều hướng đến điểm đã đánh dấu |
-| 📊 Track recording | Ghi route GPS, export file GPX/CSV ra SD |
-| 📶 BLE streaming | Stream dữ liệu GPS đến điện thoại |
+| 📊 Track recording | Ghi route GPS, export file GPX/CSV ra SD (Đã xong) |
+| 📡 Team Beacon | Định vị đồng đội offline qua ESP-NOW / LoRa (Milestone 9) |
 | 🌐 OTA update | Cập nhật firmware qua WiFi ngoài trời |
 
 ## [x] Updates (2026-09-30)
