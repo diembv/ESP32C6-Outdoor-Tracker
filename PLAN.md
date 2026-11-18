@@ -350,7 +350,7 @@ Thiết kế theo cơ chế **On-Demand (chỉ bật khi người dùng kích ho
 
 ---
 
-## [ ] Milestone 8 — Multi-Board & Multi-Display HAL Architecture (Nâng Cấp Kiến Trúc Đa Nền Tảng)
+## [x] Milestone 8 — Multi-Board & Multi-Display HAL Architecture (Nâng Cấp Kiến Trúc Đa Nền Tảng) ✅ HOÀN THÀNH
 
 Kế hoạch tái cấu trúc từ bo mạch đơn ESP32-C6 sang hỗ trợ đa bo mạch (ESP32-S3 AMOLED 1.75C/1.8/2.06/2.16/2.41) và mở đường cho các MCU khác (RP2040, STM32, nRF52).
 
@@ -381,8 +381,8 @@ Kế hoạch tái cấu trúc từ bo mạch đơn ESP32-C6 sang hỗ trợ đa 
 - [x] **Phase 1: Tách Core Domain & Tạo Board Descriptor C6** (Rút gọn `main.cpp`, tách `baro_fusion`, `track_logger`, tạo `board_ws_c6_amoled_164.h`). ✅ HOÀN THÀNH
 - [x] **Phase 2: Tầng Nguồn & I2C Phụ Trợ (`hal_power`, `hal_sensors`)** (Driver Wire nhẹ cho AXP2101, TCA9554, PCF85063, QMI8658, BMP580). ✅ HOÀN THÀNH
 - [x] **Phase 3: Hợp Nhất QSPI AMOLED & Cảm Ứng Đa IC (`hal_display`, `hal_touch`, `hal_storage`)** (Hỗ trợ SH8601/CO5300/RM690B0, FT3168/6336, CST8xx, CST92xx, SDMMC). ✅ HOÀN THÀNH
-- [ ] **Phase 4: Adaptive UI 3 Profiles** (Tách `ui_viewmodel`, xây dựng `layout_portrait`, `layout_round`, `layout_landscape`).
-- [ ] **Phase 5: Multi-Env `platformio.ini` & Compile Matrix Test** (Cấu hình 6 environment và chạy kiểm tra biên dịch đồng loạt).
+- [x] **Phase 4: Adaptive UI 3 Profiles** (Tách `ui_viewmodel`, xây dựng `layout_portrait`, `layout_round`, `layout_landscape`, `viewport_radius_px` động). ✅ HOÀN THÀNH
+- [x] **Phase 5: Multi-Env `platformio.ini` & Compile Matrix Test** (Cấu hình 6 environment và chạy kiểm tra biên dịch đồng loạt — 6/6 SUCCESS). ✅ HOÀN THÀNH
 
 ---
 

@@ -4,7 +4,7 @@
  */
 
 #include "route_nav.h"
-#include "ui_dashboard.h"
+#include "boards/board_select.h"
 #include <Arduino.h>
 #include <stdio.h>
 #include <string.h>
@@ -325,9 +325,10 @@ bool route_nav_project_to_screen(
     double center_lat, double center_lon,
     int16_t cx, int16_t cy,
     float radius_m,
+    float viewport_radius_px,
     int16_t *out_x, int16_t *out_y
 ) {
-    if (radius_m <= 0.0f) return false;
+    if (radius_m <= 0.0f || viewport_radius_px <= 0.0f) return false;
 
     double mid_lat = center_lat * (M_PI / 180.0);
     double kx = 111320.0 * cos(mid_lat);
@@ -336,8 +337,7 @@ bool route_nav_project_to_screen(
     double dx_m = (pt_lon - center_lon) * kx;
     double dy_m = (pt_lat - center_lat) * ky;
 
-    // Màn hình rộng 280px -> Bán kính hiển thị tối đa an toàn r_px = 110px
-    float scale = 110.0f / radius_m;
+    float scale = viewport_radius_px / radius_m;
 
     int32_t px = cx + (int32_t)(dx_m * scale);
     int32_t py = cy - (int32_t)(dy_m * scale); // Trục Y màn hình hướng xuống dưới
@@ -346,5 +346,5 @@ bool route_nav_project_to_screen(
     *out_y = (int16_t)py;
 
     // Kiểm tra điểm có nằm trong phạm vi vẽ an toàn (có lề 100px ngoài màn hình)
-    return (px >= -100 && px <= (SCREEN_W + 100) && py >= -100 && py <= (SCREEN_H + 100));
+    return (px >= -100 && px <= (BOARD_DISP_WIDTH + 100) && py >= -100 && py <= (BOARD_DISP_HEIGHT + 100));
 }

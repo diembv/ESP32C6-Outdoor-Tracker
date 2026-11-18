@@ -18,7 +18,7 @@
 #include "hal/hal_power.h"
 #include "hal/hal_sensors.h"
 #include "hal/hal_display.h"
-#include "ui_dashboard.h"
+#include "ui/ui_dashboard.h"
 #include "core/baro_fusion.h"
 #include "core/track_logger.h"
 #include "route_nav.h"

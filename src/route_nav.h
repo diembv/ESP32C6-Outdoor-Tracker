@@ -111,12 +111,14 @@ const RouteNavStatus *route_nav_get_status(void);
 
 /**
  * @brief Chiếu điểm (lat, lon) sang pixel màn hình (x, y) theo tâm người dùng
+ * @param viewport_radius_px Bán kính vùng vẽ bản đồ trên màn hình (px)
  */
 bool route_nav_project_to_screen(
     float pt_lat, float pt_lon,
     double center_lat, double center_lon,
     int16_t cx, int16_t cy,
     float radius_m,
+    float viewport_radius_px,
     int16_t *out_x, int16_t *out_y
 );
 
