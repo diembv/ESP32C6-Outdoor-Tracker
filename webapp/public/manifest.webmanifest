@@ -1,0 +1,10 @@
+{
+  "name": "Outdoor Tracker Companion",
+  "short_name": "TrekTracker",
+  "description": "Offline Topo Map, GPX Route Studio & Team Beacon Bridge cho ESP32 Outdoor Tracker",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1015",
+  "theme_color": "#0b1015",
+  "orientation": "any"
+}

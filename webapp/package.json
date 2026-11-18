@@ -1,0 +1,24 @@
+{
+  "name": "esp32c6-outdoor-tracker-webapp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:embedded": "vite build --config vite.embedded.config.ts && python3 scripts/gen_embedded_header.py",
+    "build:all": "npm run build && npm run build:embedded",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "maplibre-gl": "^5.3.0",
+    "preact": "^10.26.4"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.1",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.0",
+    "vite-plugin-singlefile": "^2.2.0",
+    "vitest": "^3.0.8"
+  }
+}
