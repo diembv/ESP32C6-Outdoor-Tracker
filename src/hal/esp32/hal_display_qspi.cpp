@@ -274,14 +274,42 @@ void hal_display_unlock(void) {
     xSemaphoreGive(s_lvgl_mux);
 }
 
+static uint8_t s_last_brightness = 180;
+
+static void panel_send_cmd(uint8_t cmd) {
+    if (!s_panel_io) return;
+    uint32_t lcd_cmd = ((uint32_t)cmd << 8) | (0x02UL << 24);
+    esp_lcd_panel_io_tx_param(s_panel_io, lcd_cmd, NULL, 0);
+}
+
 void hal_display_set_brightness(uint8_t level) {
     if (!s_panel_io) return;
     if (level > BOARD_DISP_MAX_BRIGHTNESS) {
         level = BOARD_DISP_MAX_BRIGHTNESS;
+    }
+    if (level > 0) {
+        s_last_brightness = level;
     }
     uint32_t lcd_cmd = 0x51;
     lcd_cmd &= 0xFF;
     lcd_cmd <<= 8;
     lcd_cmd |= (0x02 << 24);
     esp_lcd_panel_io_tx_param(s_panel_io, lcd_cmd, &level, 1);
+}
+
+void hal_display_sleep(bool sleep) {
+    if (!s_panel_io) return;
+    if (sleep) {
+        hal_display_set_brightness(0);
+        panel_send_cmd(0x28); // DISPOFF
+        vTaskDelay(pdMS_TO_TICKS(10));
+        panel_send_cmd(0x10); // SLPIN
+        vTaskDelay(pdMS_TO_TICKS(10));
+    } else {
+        panel_send_cmd(0x11); // SLPOUT
+        vTaskDelay(pdMS_TO_TICKS(120));
+        panel_send_cmd(0x29); // DISPON
+        vTaskDelay(pdMS_TO_TICKS(10));
+        hal_display_set_brightness(s_last_brightness > 0 ? s_last_brightness : 180);
+    }
 }

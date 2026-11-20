@@ -53,6 +53,11 @@ void hal_power_init(void) {
     pinMode(BOARD_BTN_PWR_PIN, INPUT_PULLUP);
 #endif
 
+#if defined(BOARD_BAT_ADC_PIN) && (BOARD_BAT_ADC_PIN >= 0)
+    analogReadResolution(12);
+    analogSetPinAttenuation(BOARD_BAT_ADC_PIN, ADC_11db);
+#endif
+
 #if defined(BOARD_HAS_PMIC_AXP2101) && BOARD_HAS_PMIC_AXP2101
     if (axp2101_init()) {
         Serial.println(F("[PWR] AXP2101 PMIC OK"));
@@ -92,11 +97,15 @@ void hal_power_read_battery(float *out_volts, uint8_t *out_pct) {
 #endif
 
 #if defined(BOARD_BAT_ADC_PIN) && (BOARD_BAT_ADC_PIN >= 0)
-    uint32_t mv = analogReadMilliVolts(BOARD_BAT_ADC_PIN);
+    uint32_t mv_sum = 0;
+    for (int i = 0; i < 4; i++) {
+        mv_sum += analogReadMilliVolts(BOARD_BAT_ADC_PIN);
+    }
+    uint32_t mv = mv_sum / 4;
     volts = (mv * BOARD_BAT_ADC_DIVIDER) / 1000.0f;
-    if (volts >= 4.15f)      pct = 100;
+    if (volts >= 4.18f)      pct = 100;
     else if (volts <= 3.30f) pct = 0;
-    else                     pct = (uint8_t)(((volts - 3.30f) / (4.15f - 3.30f)) * 100.0f);
+    else                     pct = (uint8_t)(((volts - 3.30f) / (4.18f - 3.30f)) * 100.0f);
 #endif
 
     if (out_volts) *out_volts = volts;
@@ -109,4 +118,60 @@ bool hal_power_is_button_pressed(void) {
 #else
     return false;
 #endif
+}
+
+void hal_power_shutdown(void) {
+    Serial.println(F("[PWR] Entering Power Off / Deep Sleep..."));
+    Serial.flush();
+
+    // Wait for button release so device doesn't wake up immediately
+    uint32_t t0 = millis();
+    while (hal_power_is_button_pressed() && (millis() - t0 < 2000)) {
+        delay(20);
+    }
+    delay(50);
+
+#if defined(BOARD_HAS_PMIC_AXP2101) && BOARD_HAS_PMIC_AXP2101
+    if (axp2101_is_ready()) {
+        axp2101_shutdown();
+        delay(250);
+    }
+#endif
+
+#if defined(BOARD_BTN_PWR_PIN) && (BOARD_BTN_PWR_PIN >= 0)
+#  if defined(CONFIG_IDF_TARGET_ESP32C6)
+    if (esp_sleep_is_valid_wakeup_gpio((gpio_num_t)BOARD_BTN_PWR_PIN)) {
+        esp_deep_sleep_enable_gpio_wakeup(1ULL << BOARD_BTN_PWR_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
+    }
+#  else
+    if (esp_sleep_is_valid_wakeup_gpio((gpio_num_t)BOARD_BTN_PWR_PIN)) {
+        esp_sleep_enable_ext0_wakeup((gpio_num_t)BOARD_BTN_PWR_PIN, 0);
+    }
+#  endif
+#endif
+
+    esp_deep_sleep_start();
+}
+
+static volatile bool s_req_screen_sleep = false;
+static volatile bool s_req_power_off    = false;
+
+void hal_power_request_screen_sleep(void) {
+    s_req_screen_sleep = true;
+}
+
+bool hal_power_consume_screen_sleep_req(void) {
+    if (!s_req_screen_sleep) return false;
+    s_req_screen_sleep = false;
+    return true;
+}
+
+void hal_power_request_power_off(void) {
+    s_req_power_off = true;
+}
+
+bool hal_power_consume_power_off_req(void) {
+    if (!s_req_power_off) return false;
+    s_req_power_off = false;
+    return true;
 }

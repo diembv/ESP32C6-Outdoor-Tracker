@@ -25,6 +25,7 @@ typedef struct {
     // ── Tile 1: Outdoor Sensors (Default Center) ──────────────────────────────
     lv_obj_t *t1_dot_fix;
     lv_obj_t *t1_lbl_header;
+    lv_obj_t *t1_lbl_bat;
     lv_obj_t *t1_lbl_speed;
     lv_obj_t *t1_lbl_coords;
     lv_obj_t *t1_lbl_env;
@@ -41,6 +42,8 @@ typedef struct {
     lv_obj_t *t2_lbl_btn_wifi;
     lv_obj_t *t2_btn_ble;
     lv_obj_t *t2_lbl_btn_ble;
+    lv_obj_t *t2_btn_sleep;
+    lv_obj_t *t2_btn_power;
     lv_obj_t *t2_dd_mode;
     lv_obj_t *t2_btn_log;
     lv_obj_t *t2_lbl_btn_log;

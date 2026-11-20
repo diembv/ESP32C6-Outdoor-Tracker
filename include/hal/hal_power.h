@@ -33,6 +33,19 @@ void hal_power_read_battery(float *out_volts, uint8_t *out_pct);
  */
 bool hal_power_is_button_pressed(void);
 
+/**
+ * @brief Shut down the device (AXP2101 hardware power-off if available, else ESP32 Deep Sleep).
+ */
+void hal_power_shutdown(void);
+
+/**
+ * @brief Thread-safe UI-to-main-loop power action requests.
+ */
+void hal_power_request_screen_sleep(void);
+bool hal_power_consume_screen_sleep_req(void);
+void hal_power_request_power_off(void);
+bool hal_power_consume_power_off_req(void);
+
 #ifdef __cplusplus
 }
 #endif

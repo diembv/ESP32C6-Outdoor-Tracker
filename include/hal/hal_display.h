@@ -35,6 +35,11 @@ void hal_display_unlock(void);
  */
 void hal_display_set_brightness(uint8_t level);
 
+/**
+ * @brief Put AMOLED panel into hardware sleep (DISPOFF + SLPIN) or wake it (SLPOUT + DISPON).
+ */
+void hal_display_sleep(bool sleep);
+
 #ifdef __cplusplus
 }
 #endif

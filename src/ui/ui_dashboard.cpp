@@ -48,6 +48,10 @@ void ui_dashboard_update(const SensorSnapshot *snap)
                                       vm.gps_fix_valid ? CLR_GREEN : CLR_RED, 0);
         }
         if (s_widgets.t1_lbl_header) lv_label_set_text(s_widgets.t1_lbl_header, vm.header);
+        if (s_widgets.t1_lbl_bat) {
+            lv_label_set_text(s_widgets.t1_lbl_bat, vm.bat_badge);
+            lv_obj_set_style_text_color(s_widgets.t1_lbl_bat, vm.bat_color, 0);
+        }
         if (s_widgets.t1_lbl_speed)  lv_label_set_text(s_widgets.t1_lbl_speed, vm.speed);
         if (s_widgets.t1_lbl_coords) lv_label_set_text(s_widgets.t1_lbl_coords, vm.coords);
         if (s_widgets.t1_lbl_env)    lv_label_set_text(s_widgets.t1_lbl_env, vm.env);

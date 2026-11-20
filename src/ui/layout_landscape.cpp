@@ -132,11 +132,13 @@ static void build_land_tile1_sensors(lv_obj_t *tile, UiWidgets *w)
     lv_obj_set_style_pad_all(hdr, 0, 0);
     lv_obj_set_style_pad_column(hdr, 10, 0);
     lv_obj_set_flex_flow(hdr, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
     w->t1_dot_fix    = ui_theme_make_dot(hdr, CLR_RED, 12);
-    w->t1_lbl_header = ui_theme_make_val_label(hdr, "Sats: 0 | --:-- | 100%", CLR_ACCENT, f->md);
+    w->t1_lbl_header = ui_theme_make_val_label(hdr, "Sats:0 | --:--", CLR_ACCENT, f->md);
+    lv_obj_set_flex_grow(w->t1_lbl_header, 1);
+    w->t1_lbl_bat    = ui_theme_make_val_label(hdr, "--%", CLR_GREEN, f->md);
 
     // 2-Column Body
     lv_obj_t *body = lv_obj_create(tile);
@@ -270,6 +272,49 @@ static void build_land_tile2_system(lv_obj_t *tile, UiWidgets *w)
     lv_obj_set_style_text_color(w->t2_lbl_btn_ble, CLR_WHITE, 0);
     lv_obj_clear_flag(w->t2_lbl_btn_ble, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_center(w->t2_lbl_btn_ble);
+
+    lv_obj_t *pwr_row = lv_obj_create(right);
+    lv_obj_set_size(pwr_row, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(pwr_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(pwr_row, 0, 0);
+    lv_obj_set_style_pad_all(pwr_row, 0, 0);
+    lv_obj_set_style_pad_column(pwr_row, 8, 0);
+    lv_obj_set_flex_flow(pwr_row, LV_FLEX_FLOW_ROW);
+    lv_obj_clear_flag(pwr_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    w->t2_btn_sleep = lv_btn_create(pwr_row);
+    lv_obj_set_height(w->t2_btn_sleep, 44);
+    lv_obj_set_flex_grow(w->t2_btn_sleep, 1);
+    lv_obj_clear_flag(w->t2_btn_sleep, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_set_style_bg_color(w->t2_btn_sleep, lv_color_hex(0x1E293B), 0);
+    lv_obj_set_style_border_color(w->t2_btn_sleep, CLR_BORDER, 0);
+    lv_obj_set_style_border_width(w->t2_btn_sleep, 1, 0);
+    lv_obj_set_style_radius(w->t2_btn_sleep, 10, 0);
+    lv_obj_add_event_cb(w->t2_btn_sleep, ui_vm_btn_sleep_cb, LV_EVENT_CLICKED, w);
+
+    lv_obj_t *lbl_sleep = lv_label_create(w->t2_btn_sleep);
+    lv_label_set_text(lbl_sleep, LV_SYMBOL_EYE_CLOSE " SLEEP");
+    lv_obj_set_style_text_font(lbl_sleep, f->sm, 0);
+    lv_obj_set_style_text_color(lbl_sleep, CLR_WHITE, 0);
+    lv_obj_clear_flag(lbl_sleep, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(lbl_sleep);
+
+    w->t2_btn_power = lv_btn_create(pwr_row);
+    lv_obj_set_height(w->t2_btn_power, 44);
+    lv_obj_set_flex_grow(w->t2_btn_power, 1);
+    lv_obj_clear_flag(w->t2_btn_power, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_set_style_bg_color(w->t2_btn_power, lv_color_hex(0x450A0A), 0);
+    lv_obj_set_style_border_color(w->t2_btn_power, CLR_RED, 0);
+    lv_obj_set_style_border_width(w->t2_btn_power, 1, 0);
+    lv_obj_set_style_radius(w->t2_btn_power, 10, 0);
+    lv_obj_add_event_cb(w->t2_btn_power, ui_vm_btn_power_cb, LV_EVENT_CLICKED, w);
+
+    lv_obj_t *lbl_pwr = lv_label_create(w->t2_btn_power);
+    lv_label_set_text(lbl_pwr, LV_SYMBOL_POWER " PWR OFF");
+    lv_obj_set_style_text_font(lbl_pwr, f->sm, 0);
+    lv_obj_set_style_text_color(lbl_pwr, CLR_RED, 0);
+    lv_obj_clear_flag(lbl_pwr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(lbl_pwr);
 
     w->t2_btn_calib = lv_btn_create(right);
     lv_obj_set_size(w->t2_btn_calib, lv_pct(100), 56);

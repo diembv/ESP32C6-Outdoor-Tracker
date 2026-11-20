@@ -13,7 +13,9 @@
 typedef struct {
     // Tile 1: Sensors
     bool       gps_fix_valid;
-    char       header[64];
+    char       header[48];
+    char       bat_badge[16];
+    lv_color_t bat_color;
     char       speed[32];
     char       coords[96];
     char       env[128];
@@ -55,3 +57,5 @@ void ui_vm_btn_calib_cb(lv_event_t *e);
 void ui_vm_btn_log_cb(lv_event_t *e);
 void ui_vm_btn_wifi_cb(lv_event_t *e);
 void ui_vm_btn_ble_cb(lv_event_t *e);
+void ui_vm_btn_sleep_cb(lv_event_t *e);
+void ui_vm_btn_power_cb(lv_event_t *e);

@@ -113,10 +113,12 @@ static void build_tile1_sensors(lv_obj_t *tile, UiWidgets *w, lv_coord_t pad, lv
     lv_obj_set_style_pad_row(tile, gap + 2, 0);
 
     // Header
-    lv_obj_t *hdr = make_flex_row(tile, LV_FLEX_ALIGN_START, 8);
+    const lv_font_t *hdr_font = (SCREEN_W >= 320) ? f->md : f->sm;
+    lv_obj_t *hdr = make_flex_row(tile, LV_FLEX_ALIGN_SPACE_BETWEEN, 6);
     w->t1_dot_fix    = ui_theme_make_dot(hdr, CLR_RED, 10);
-    w->t1_lbl_header = ui_theme_make_val_label(hdr, "Sats: 0 | --:-- | 100%", CLR_ACCENT, f->md);
+    w->t1_lbl_header = ui_theme_make_val_label(hdr, "Sats:0 | --:--", CLR_ACCENT, hdr_font);
     lv_obj_set_flex_grow(w->t1_lbl_header, 1);
+    w->t1_lbl_bat    = ui_theme_make_val_label(hdr, "--%", CLR_GREEN, hdr_font);
 
     ui_theme_make_divider(tile);
 
@@ -254,6 +256,43 @@ static void build_tile2_system(lv_obj_t *tile, UiWidgets *w, lv_coord_t pad, lv_
     lv_obj_set_style_text_color(w->t2_lbl_btn_ble, CLR_WHITE, 0);
     lv_obj_clear_flag(w->t2_lbl_btn_ble, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_center(w->t2_lbl_btn_ble);
+
+    // Power Row: [SCREEN OFF] + [POWER OFF]
+    lv_obj_t *pwr_row = make_flex_row(tile, LV_FLEX_ALIGN_SPACE_BETWEEN, 6);
+
+    w->t2_btn_sleep = lv_btn_create(pwr_row);
+    lv_obj_set_height(w->t2_btn_sleep, 36);
+    lv_obj_set_flex_grow(w->t2_btn_sleep, 1);
+    lv_obj_clear_flag(w->t2_btn_sleep, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_set_style_bg_color(w->t2_btn_sleep, lv_color_hex(0x1E293B), 0);
+    lv_obj_set_style_border_color(w->t2_btn_sleep, CLR_BORDER, 0);
+    lv_obj_set_style_border_width(w->t2_btn_sleep, 1, 0);
+    lv_obj_set_style_radius(w->t2_btn_sleep, 8, 0);
+    lv_obj_add_event_cb(w->t2_btn_sleep, ui_vm_btn_sleep_cb, LV_EVENT_CLICKED, w);
+
+    lv_obj_t *lbl_sleep = lv_label_create(w->t2_btn_sleep);
+    lv_label_set_text(lbl_sleep, LV_SYMBOL_EYE_CLOSE " SLEEP");
+    lv_obj_set_style_text_font(lbl_sleep, f->xs, 0);
+    lv_obj_set_style_text_color(lbl_sleep, CLR_WHITE, 0);
+    lv_obj_clear_flag(lbl_sleep, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(lbl_sleep);
+
+    w->t2_btn_power = lv_btn_create(pwr_row);
+    lv_obj_set_height(w->t2_btn_power, 36);
+    lv_obj_set_flex_grow(w->t2_btn_power, 1);
+    lv_obj_clear_flag(w->t2_btn_power, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_set_style_bg_color(w->t2_btn_power, lv_color_hex(0x450A0A), 0);
+    lv_obj_set_style_border_color(w->t2_btn_power, CLR_RED, 0);
+    lv_obj_set_style_border_width(w->t2_btn_power, 1, 0);
+    lv_obj_set_style_radius(w->t2_btn_power, 8, 0);
+    lv_obj_add_event_cb(w->t2_btn_power, ui_vm_btn_power_cb, LV_EVENT_CLICKED, w);
+
+    lv_obj_t *lbl_pwr = lv_label_create(w->t2_btn_power);
+    lv_label_set_text(lbl_pwr, LV_SYMBOL_POWER " PWR OFF");
+    lv_obj_set_style_text_font(lbl_pwr, f->xs, 0);
+    lv_obj_set_style_text_color(lbl_pwr, CLR_RED, 0);
+    lv_obj_clear_flag(lbl_pwr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(lbl_pwr);
 
     // Bottom Row: [Mode Dropdown] + [Start/Stop Log Button]
     lv_obj_t *bot_row = make_flex_row(tile, LV_FLEX_ALIGN_SPACE_BETWEEN, 8);

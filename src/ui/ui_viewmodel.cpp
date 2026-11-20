@@ -9,6 +9,7 @@
 #include "core/track_logger.h"
 #include "connectivity/wifi_sync.h"
 #include "connectivity/ble_service.h"
+#include "hal/hal_power.h"
 #include "route_nav.h"
 #include <Arduino.h>
 #include <stdio.h>
@@ -41,18 +42,22 @@ void ui_vm_format(const SensorSnapshot *snap, UiViewModel *vm)
     vm->gps_fix_valid     = snap->gps.fix_valid;
     vm->is_logging_active = snap->sys.is_logging_active;
     vm->blink_on          = ((millis() / 500) % 2 == 0);
+    vm->wifi_active       = wifi_sync_is_active();
+    vm->ble_active        = ble_service_is_active();
 
     // ── Tile 1: Sensors ───────────────────────────────────────────────────────
-    char timeStr[16] = "--:-- --";
+    char timeStr[16] = "--:--";
     if (snap->gps.time_valid) {
         uint8_t local_h = (snap->gps.hour + 7) % 24;
-        uint8_t h12 = local_h % 12;
-        if (h12 == 0) h12 = 12;
-        const char *ampm = (local_h >= 12) ? "PM" : "AM";
-        snprintf(timeStr, sizeof(timeStr), "%02d:%02d %s", h12, snap->gps.minute, ampm);
+        snprintf(timeStr, sizeof(timeStr), "%02d:%02d", local_h, snap->gps.minute);
     }
-    snprintf(vm->header, sizeof(vm->header), "Sats: %lu | %s | %d%%",
-             (unsigned long)snap->gps.satellites, timeStr, (int)snap->sys.battery_pct);
+    snprintf(vm->header, sizeof(vm->header), "Sats:%lu | %s",
+             (unsigned long)snap->gps.satellites, timeStr);
+
+    snprintf(vm->bat_badge, sizeof(vm->bat_badge), "%d%%", (int)snap->sys.battery_pct);
+    if (snap->sys.battery_pct >= 50)      vm->bat_color = CLR_GREEN;
+    else if (snap->sys.battery_pct >= 20) vm->bat_color = CLR_YELLOW;
+    else                                  vm->bat_color = CLR_RED;
 
     snprintf(vm->speed, sizeof(vm->speed), "%.1f km/h", snap->gps.speed_kmh);
 
@@ -511,4 +516,37 @@ void ui_vm_btn_ble_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     ble_service_toggle();
+}
+
+static void power_confirm_cb(lv_event_t *e)
+{
+    lv_obj_t *mbox = lv_event_get_current_target(e);
+    const char *txt = lv_msgbox_get_active_btn_text(mbox);
+    if (txt && strcmp(txt, "OFF") == 0) {
+        lv_msgbox_close(mbox);
+        hal_power_request_power_off();
+    } else {
+        lv_msgbox_close(mbox);
+    }
+}
+
+void ui_vm_btn_sleep_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    hal_power_request_screen_sleep();
+}
+
+void ui_vm_btn_power_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    static const char *btns[] = {"OFF", "CANCEL", ""};
+    lv_obj_t *mbox = lv_msgbox_create(
+        NULL,
+        "POWER OFF",
+        "Save active log and\nshut down device?",
+        btns,
+        false
+    );
+    lv_obj_add_event_cb(mbox, power_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_center(mbox);
 }

@@ -103,3 +103,11 @@ bool axp2101_read_battery(float *out_volts, uint8_t *out_pct, bool *out_charging
 
     return true;
 }
+
+void axp2101_shutdown(void) {
+    if (!s_axp_ready) return;
+    uint8_t cfg = 0;
+    if (hal_i2c_read_regs(AXP2101_I2C_ADDR, 0x10, &cfg, 1)) {
+        hal_i2c_write_reg(AXP2101_I2C_ADDR, 0x10, cfg | 0x01); // Soft power off
+    }
+}

@@ -15,6 +15,7 @@ extern "C" {
 bool axp2101_init(void);
 bool axp2101_is_ready(void);
 bool axp2101_read_battery(float *out_volts, uint8_t *out_pct, bool *out_charging);
+void axp2101_shutdown(void);
 
 #ifdef __cplusplus
 }

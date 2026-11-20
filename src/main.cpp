@@ -160,6 +160,7 @@ void setup() {
     // ── I2C + Power + Sensors ─────────────────────────────────────────────────
     hal_i2c_init(BOARD_I2C_SDA_PIN, BOARD_I2C_SCL_PIN, BOARD_I2C_FREQ_HZ);
     hal_power_init();
+    hal_power_read_battery(&g_snap.sys.battery_v, &g_snap.sys.battery_pct);
     hal_i2c_scan();
     Serial.flush();
 
@@ -196,74 +197,131 @@ void setup() {
     tLastPrint  = millis();
 }
 
+static void perform_safe_power_off(uint32_t now) {
+    Serial.println(F("[PWR] Bat dau quy trinh tat nguon an toan..."));
+
+    if (g_snap.sys.is_logging_active) {
+#if defined(BOARD_SD_SHARES_DISPLAY_BUS) && BOARD_SD_SHARES_DISPLAY_BUS
+        if (hal_display_lock(-1)) {
+            track_logger_toggle(&g_snap, now);
+            hal_display_unlock();
+        }
+#else
+        track_logger_toggle(&g_snap, now);
+#endif
+    }
+
+    wifi_sync_stop();
+    ble_service_stop();
+
+    if (hal_display_lock(-1)) {
+        hal_display_sleep(true);
+        hal_display_unlock();
+    }
+
+    hal_power_shutdown();
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  loop()
 // ═══════════════════════════════════════════════════════════════════════════════
 void loop() {
     const uint32_t now = millis();
-    static uint32_t lpt=0;
-    if(now-lpt>1000){ lpt=now; Serial.println("[DEBUG] Loop is running!"); }
+    static constexpr uint32_t SCREEN_AUTO_OFF_MS = 30000; // Tự tắt màn sau 30s không chạm
 
-    // ── Quản lý tắt/bật màn hình (Mặc định LUÔN SÁNG, chỉ tắt khi bấm nút BOOT) ──
-    static bool isScreenOn = true;
-    static float lastPitch = 0.0f, lastRoll = 0.0f;
+    static bool     isScreenOn    = true;
+    static uint32_t screenOffAtMs = 0;
+    static float    lastPitch     = 0.0f;
+    static float    lastRoll      = 0.0f;
 
-    // ── 1. Nút BOOT (GPIO9): Nhấn giữ > 1200ms để bật/tắt màn hình (Chống nhiễu tuyệt đối) ──
+    auto set_screen_state = [&](bool turn_on, const char *reason) {
+        if (isScreenOn == turn_on) return;
+        if (hal_display_lock(-1)) {
+            isScreenOn = turn_on;
+            hal_display_sleep(!turn_on);
+            if (turn_on) {
+                lv_disp_trig_activity(NULL);
+            } else {
+                screenOffAtMs = now;
+            }
+            hal_display_unlock();
+            Serial.printf("[PWR] Man hinh %s (%s)\n", turn_on ? "BAT" : "TAT", reason);
+        }
+    };
+
+    // ── 0. Xử lý yêu cầu từ giao diện cảm ứng (SLEEP / POWER OFF) ────────────
+    if (hal_power_consume_power_off_req()) {
+        perform_safe_power_off(now);
+    }
+    if (hal_power_consume_screen_sleep_req()) {
+        set_screen_state(false, "UI SLEEP");
+    }
+
+    // ── 1. Nút vật lý BOOT/PWR:
+    //    - Giữ 600ms..2999ms rồi thả -> Bật/Tắt màn hình
+    //    - Giữ >= 3000ms -> Tắt nguồn an toàn (Deep Sleep / PMIC Off)
     static uint32_t btn_press_start = 0;
-    static bool btn_handled = false;
+    static bool     btn_poweroff_triggered = false;
     bool btn_down = hal_power_is_button_pressed();
 
     if (btn_down) {
         if (btn_press_start == 0) {
             btn_press_start = now;
-        } else if (!btn_handled && (now - btn_press_start >= 1200)) {
-            btn_handled = true;
-            if (hal_display_lock(-1)) {
-                isScreenOn = !isScreenOn;
-                hal_display_set_brightness(isScreenOn ? 180 : 0);
-                if (isScreenOn) {
-                    lv_disp_trig_activity(NULL);
-                }
-                hal_display_unlock();
-                Serial.printf("[PWR] Giữ nút BOOT > 1200ms -> Màn hình: %s\n", isScreenOn ? "BAT" : "TAT");
-            }
+        } else if (!btn_poweroff_triggered && (now - btn_press_start >= 3000)) {
+            btn_poweroff_triggered = true;
+            perform_safe_power_off(now);
         }
     } else {
+        if (btn_press_start > 0 && !btn_poweroff_triggered) {
+            uint32_t held_ms = now - btn_press_start;
+            if (held_ms >= 600) {
+                set_screen_state(!isScreenOn, "BOOT BTN");
+            }
+        }
         btn_press_start = 0;
-        btn_handled = false;
+        btn_poweroff_triggered = false;
     }
 
-    // ── 2. Khi màn hình đang tắt: Chạm vào màn hình hoặc chuyển động để bật lại ──
-    if (!isScreenOn) {
+    // ── 2. Auto Screen-Off sau 30s không chạm (tạm dừng khi bật Wi-Fi Sync) ──
+    if (isScreenOn && !wifi_sync_is_active()) {
+        static uint32_t last_idle_check = 0;
+        if (now - last_idle_check >= 1000) {
+            last_idle_check = now;
+            if (hal_display_lock(-1)) {
+                uint32_t inactive_ms = lv_disp_get_inactive_time(NULL);
+                hal_display_unlock();
+                if (inactive_ms >= SCREEN_AUTO_OFF_MS) {
+                    set_screen_state(false, "Auto 30s timeout");
+                }
+            }
+        }
+    }
+
+    // ── 3. Khi màn hình đang tắt: Chạm màn hình hoặc lắc cổ tay để bật lại ───
+    if (!isScreenOn && (now - screenOffAtMs >= 600)) {
         static uint32_t last_touch_wake_check = 0;
         if (now - last_touch_wake_check >= 100) {
             last_touch_wake_check = now;
             if (hal_display_lock(-1)) {
                 uint32_t inactive_ms = lv_disp_get_inactive_time(NULL);
-                if (inactive_ms < 150) {
-                    isScreenOn = true;
-                    hal_display_set_brightness(180);
-                    Serial.println(F("[PWR] Chạm màn hình -> Bật sáng lại!"));
-                }
                 hal_display_unlock();
+                if (inactive_ms < 150) {
+                    set_screen_state(true, "Touch wake");
+                }
             }
         }
 
-        // Lắc tay / Chuyển động (Wake-on-motion)
-        if (g_snap.imu.valid) {
-            if (abs(g_snap.imu.pitch_deg - lastPitch) > 25.0f ||
-                abs(g_snap.imu.roll_deg - lastRoll) > 25.0f) {
-                if (hal_display_lock(-1)) {
-                    isScreenOn = true;
-                    hal_display_set_brightness(180);
-                    lv_disp_trig_activity(NULL);
-                    hal_display_unlock();
-                    Serial.println(F("[PWR] Chuyển động mạnh -> Bật sáng màn hình!"));
-                }
+        if (!isScreenOn && g_snap.imu.valid) {
+            if (fabsf(g_snap.imu.pitch_deg - lastPitch) > 25.0f ||
+                fabsf(g_snap.imu.roll_deg - lastRoll) > 25.0f) {
+                set_screen_state(true, "Motion wake");
             }
             lastPitch = g_snap.imu.pitch_deg;
             lastRoll  = g_snap.imu.roll_deg;
         }
+    } else if (g_snap.imu.valid) {
+        lastPitch = g_snap.imu.pitch_deg;
+        lastRoll  = g_snap.imu.roll_deg;
     }
 
     // ── Đọc Pin (PMIC AXP2101 hoặc ADC, Mỗi 2 giây) ──────────────────────────
