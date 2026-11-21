@@ -141,12 +141,20 @@ async function loadRoutes(){
     if(!d.files.length){$('rtBox').innerHTML='<div class="k">No .bin routes</div>';return;}
     $('rtBox').innerHTML=d.files.map(f=>`<div class="row">
       <div class="v">${f.name} (${(f.size/1024).toFixed(1)} KB)</div>
-      <button class="ok" onclick="actRt('${f.name}')">Activate</button></div>`).join('');
+      <div style="display:flex;gap:4px">
+        <button class="ok" onclick="actRt('${f.name}')">Use</button>
+        <button class="del" onclick="delRt('${f.name}')">X</button>
+      </div></div>`).join('');
   }catch(e){msg('Routes error: '+e,1);}
 }
 async function actRt(name){
   await fetch('/api/routes/activate?name='+encodeURIComponent(name),{method:'POST'});
   msg('Activated '+name);
+}
+async function delRt(name){
+  if(!confirm('Delete route '+name+'?'))return;
+  await fetch('/api/routes?name='+encodeURIComponent(name),{method:'DELETE'});
+  loadRoutes();msg('Deleted '+name);
 }
 function ptDistM(p,a,b){
   const R=6371000,rad=Math.PI/180,cos=Math.cos(a[0]*rad);

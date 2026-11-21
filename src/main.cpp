@@ -19,6 +19,7 @@
 #include "hal/hal_sensors.h"
 #include "hal/hal_display.h"
 #include "ui/ui_dashboard.h"
+#include "ui/ui_viewmodel.h"
 #include "core/baro_fusion.h"
 #include "core/track_logger.h"
 #include "core/team_config.h"
@@ -227,7 +228,8 @@ static void perform_safe_power_off(uint32_t now) {
 // ═══════════════════════════════════════════════════════════════════════════════
 void loop() {
     const uint32_t now = millis();
-    static constexpr uint32_t SCREEN_AUTO_OFF_MS = 30000; // Tự tắt màn sau 30s không chạm
+    static constexpr uint32_t SCREEN_AUTO_OFF_MS     = 15000;  // Tự tắt màn sau 15s không chạm
+    static constexpr uint32_t AUTO_POWER_OFF_IDLE_MS = 300000; // Tự tắt nguồn (Deep Sleep) sau 5p không ghi log
 
     static bool     isScreenOn    = true;
     static uint32_t screenOffAtMs = 0;
@@ -249,17 +251,52 @@ void loop() {
         }
     };
 
-    // ── 0. Xử lý yêu cầu từ giao diện cảm ứng (SLEEP / POWER OFF) ────────────
+    // ── 0. Xử lý yêu cầu từ giao diện cảm ứng (an toàn ngoài LVGL task) ──────
     if (hal_power_consume_power_off_req()) {
         perform_safe_power_off(now);
     }
-    if (hal_power_consume_screen_sleep_req()) {
-        set_screen_state(false, "UI SLEEP");
+    if (hal_power_consume_wifi_toggle_req()) {
+        bool active = wifi_sync_toggle();
+        if (hal_display_lock(-1)) {
+            if (active) {
+                ui_vm_show_wifi_popup(wifi_sync_get_ssid());
+            }
+            ui_dashboard_update(&g_snap);
+            hal_display_unlock();
+        }
+    }
+    if (hal_power_consume_ble_toggle_req()) {
+        ble_service_toggle();
+        if (hal_display_lock(-1)) {
+            ui_dashboard_update(&g_snap);
+            hal_display_unlock();
+        }
+    }
+    if (hal_power_consume_log_toggle_req()) {
+        bool was_logging = g_snap.sys.is_logging_active;
+#if defined(BOARD_SD_SHARES_DISPLAY_BUS) && BOARD_SD_SHARES_DISPLAY_BUS
+        if (hal_display_lock(-1)) {
+            track_logger_toggle(&g_snap, now);
+            hal_display_unlock();
+        }
+#else
+        track_logger_toggle(&g_snap, now);
+#endif
+        float dist_m = 0.0f;
+        uint32_t dur_s = 0;
+        if (was_logging) {
+            track_logger_get_summary(&dist_m, &dur_s, now);
+        }
+        if (hal_display_lock(-1)) {
+            ui_vm_show_log_popup(!was_logging, g_snap.gps.fix_valid, dist_m, dur_s);
+            ui_dashboard_update(&g_snap);
+            hal_display_unlock();
+        }
     }
 
-    // ── 1. Nút vật lý BOOT/PWR:
-    //    - Giữ 600ms..2999ms rồi thả -> Bật/Tắt màn hình
-    //    - Giữ >= 3000ms -> Tắt nguồn an toàn (Deep Sleep / PMIC Off)
+    // ── 1. Nút cứng BOOT/PWR:
+    //    - Bấm ngắn (50ms..2500ms) -> Bật/Tắt màn hình (Sleep)
+    //    - Giữ >= 3000ms           -> Tắt nguồn an toàn (Deep Sleep / PMIC Off)
     static uint32_t btn_press_start = 0;
     static bool     btn_poweroff_triggered = false;
     bool btn_down = hal_power_is_button_pressed();
@@ -274,7 +311,7 @@ void loop() {
     } else {
         if (btn_press_start > 0 && !btn_poweroff_triggered) {
             uint32_t held_ms = now - btn_press_start;
-            if (held_ms >= 600) {
+            if (held_ms >= 50) {
                 set_screen_state(!isScreenOn, "BOOT BTN");
             }
         }
@@ -282,7 +319,7 @@ void loop() {
         btn_poweroff_triggered = false;
     }
 
-    // ── 2. Auto Screen-Off sau 30s không chạm (tạm dừng khi bật Wi-Fi Sync) ──
+    // ── 2. Auto Screen-Off sau 15s không chạm (tạm dừng khi bật Wi-Fi Sync) ──
     if (isScreenOn && !wifi_sync_is_active()) {
         static uint32_t last_idle_check = 0;
         if (now - last_idle_check >= 1000) {
@@ -291,13 +328,23 @@ void loop() {
                 uint32_t inactive_ms = lv_disp_get_inactive_time(NULL);
                 hal_display_unlock();
                 if (inactive_ms >= SCREEN_AUTO_OFF_MS) {
-                    set_screen_state(false, "Auto 30s timeout");
+                    set_screen_state(false, "Auto 15s timeout");
                 }
             }
         }
     }
 
-    // ── 3. Khi màn hình đang tắt: Chạm màn hình hoặc lắc cổ tay để bật lại ───
+    // ── 3. Auto Deep Sleep / Power-Off sau 5 phút tắt màn & KHÔNG ghi log ────
+    if (!isScreenOn &&
+        !g_snap.sys.is_logging_active &&
+        !wifi_sync_is_active() &&
+        !ble_service_is_active() &&
+        (now - screenOffAtMs >= AUTO_POWER_OFF_IDLE_MS)) {
+        Serial.println(F("[PWR] Khong ghi log & tat man > 5 phut -> Tu dong Deep Sleep!"));
+        perform_safe_power_off(now);
+    }
+
+    // ── 4. Khi màn hình đang tắt: Chạm màn hình hoặc lắc cổ tay để bật lại ───
     if (!isScreenOn && (now - screenOffAtMs >= 600)) {
         static uint32_t last_touch_wake_check = 0;
         if (now - last_touch_wake_check >= 100) {

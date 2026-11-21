@@ -57,5 +57,10 @@ void ui_vm_btn_calib_cb(lv_event_t *e);
 void ui_vm_btn_log_cb(lv_event_t *e);
 void ui_vm_btn_wifi_cb(lv_event_t *e);
 void ui_vm_btn_ble_cb(lv_event_t *e);
-void ui_vm_btn_sleep_cb(lv_event_t *e);
 void ui_vm_btn_power_cb(lv_event_t *e);
+
+/**
+ * @brief Popup helpers to be called from main loop (inside hal_display_lock) after heavy I/O finishes.
+ */
+void ui_vm_show_wifi_popup(const char *ssid);
+void ui_vm_show_log_popup(bool started, bool has_gps_fix, float dist_m, uint32_t dur_s);

@@ -89,16 +89,19 @@ static void build_tile0_nav(lv_obj_t *tile, UiWidgets *w, lv_coord_t pad, lv_coo
 
     ui_theme_make_divider(tile);
 
-    // 3. Bottom Info Panel
+    // 3. Bottom Info Panel (adaptive font so Rem & ON/OFF never overlap on 280px)
+    const lv_font_t *nav_val_font = (SCREEN_W >= 360) ? f->md : f->sm;
+    const lv_font_t *nav_sub_font = (SCREEN_W >= 360) ? f->sm : f->xs;
+
     lv_obj_t *row1 = make_flex_row(tile, LV_FLEX_ALIGN_SPACE_BETWEEN, 6);
-    w->t0_lbl_dist_rem = ui_theme_make_val_label(row1, "Rem: -- km", CLR_WHITE, f->md);
-    w->t0_lbl_xte      = ui_theme_make_val_label(row1, "ON ROUTE", CLR_GREEN, f->md);
+    w->t0_lbl_dist_rem = ui_theme_make_val_label(row1, "Rem: -- km", CLR_WHITE, nav_val_font);
+    w->t0_lbl_xte      = ui_theme_make_val_label(row1, "ON ROUTE", CLR_GREEN, nav_val_font);
 
     ui_theme_make_divider(tile);
 
     lv_obj_t *row2 = make_flex_row(tile, LV_FLEX_ALIGN_SPACE_BETWEEN, 6);
-    w->t0_lbl_course    = ui_theme_make_val_label(row2, "HDG: 000 deg N", CLR_ORANGE, f->sm);
-    w->t0_lbl_speed_alt = ui_theme_make_val_label(row2, "0.0 km/h | --m", CLR_DIMTEXT, f->sm);
+    w->t0_lbl_course    = ui_theme_make_val_label(row2, "HDG: 000 deg N", CLR_ORANGE, nav_sub_font);
+    w->t0_lbl_speed_alt = ui_theme_make_val_label(row2, "0.0 km/h | --m", CLR_DIMTEXT, nav_sub_font);
 
     w->t0_lbl_map_note = ui_theme_make_val_label(tile, "Tap map/btn to zoom (100m-2.5km)", CLR_DIMTEXT, f->xs);
 }
@@ -257,53 +260,17 @@ static void build_tile2_system(lv_obj_t *tile, UiWidgets *w, lv_coord_t pad, lv_
     lv_obj_clear_flag(w->t2_lbl_btn_ble, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_center(w->t2_lbl_btn_ble);
 
-    // Power Row: [SCREEN OFF] + [POWER OFF]
-    lv_obj_t *pwr_row = make_flex_row(tile, LV_FLEX_ALIGN_SPACE_BETWEEN, 6);
+    // Mode & Power Row: [Hiking/Cycling] + [PWR OFF]
+    lv_obj_t *mid_row = make_flex_row(tile, LV_FLEX_ALIGN_SPACE_BETWEEN, 8);
+    lv_obj_clear_flag(mid_row, LV_OBJ_FLAG_SCROLL_CHAIN);
 
-    w->t2_btn_sleep = lv_btn_create(pwr_row);
-    lv_obj_set_height(w->t2_btn_sleep, 36);
-    lv_obj_set_flex_grow(w->t2_btn_sleep, 1);
-    lv_obj_clear_flag(w->t2_btn_sleep, LV_OBJ_FLAG_SCROLL_CHAIN);
-    lv_obj_set_style_bg_color(w->t2_btn_sleep, lv_color_hex(0x1E293B), 0);
-    lv_obj_set_style_border_color(w->t2_btn_sleep, CLR_BORDER, 0);
-    lv_obj_set_style_border_width(w->t2_btn_sleep, 1, 0);
-    lv_obj_set_style_radius(w->t2_btn_sleep, 8, 0);
-    lv_obj_add_event_cb(w->t2_btn_sleep, ui_vm_btn_sleep_cb, LV_EVENT_CLICKED, w);
-
-    lv_obj_t *lbl_sleep = lv_label_create(w->t2_btn_sleep);
-    lv_label_set_text(lbl_sleep, LV_SYMBOL_EYE_CLOSE " SLEEP");
-    lv_obj_set_style_text_font(lbl_sleep, f->xs, 0);
-    lv_obj_set_style_text_color(lbl_sleep, CLR_WHITE, 0);
-    lv_obj_clear_flag(lbl_sleep, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_center(lbl_sleep);
-
-    w->t2_btn_power = lv_btn_create(pwr_row);
-    lv_obj_set_height(w->t2_btn_power, 36);
-    lv_obj_set_flex_grow(w->t2_btn_power, 1);
-    lv_obj_clear_flag(w->t2_btn_power, LV_OBJ_FLAG_SCROLL_CHAIN);
-    lv_obj_set_style_bg_color(w->t2_btn_power, lv_color_hex(0x450A0A), 0);
-    lv_obj_set_style_border_color(w->t2_btn_power, CLR_RED, 0);
-    lv_obj_set_style_border_width(w->t2_btn_power, 1, 0);
-    lv_obj_set_style_radius(w->t2_btn_power, 8, 0);
-    lv_obj_add_event_cb(w->t2_btn_power, ui_vm_btn_power_cb, LV_EVENT_CLICKED, w);
-
-    lv_obj_t *lbl_pwr = lv_label_create(w->t2_btn_power);
-    lv_label_set_text(lbl_pwr, LV_SYMBOL_POWER " PWR OFF");
-    lv_obj_set_style_text_font(lbl_pwr, f->xs, 0);
-    lv_obj_set_style_text_color(lbl_pwr, CLR_RED, 0);
-    lv_obj_clear_flag(lbl_pwr, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_center(lbl_pwr);
-
-    // Bottom Row: [Mode Dropdown] + [Start/Stop Log Button]
-    lv_obj_t *bot_row = make_flex_row(tile, LV_FLEX_ALIGN_SPACE_BETWEEN, 8);
-
-    w->t2_dd_mode = lv_dropdown_create(bot_row);
+    w->t2_dd_mode = lv_dropdown_create(mid_row);
     lv_dropdown_set_options(w->t2_dd_mode, "Hiking\nCycling");
     lv_dropdown_set_symbol(w->t2_dd_mode, NULL);
     lv_dropdown_set_dir(w->t2_dd_mode, LV_DIR_TOP);
-    lv_obj_set_size(w->t2_dd_mode, (SCREEN_W >= 360) ? 120 : 96, btn_h);
+    lv_obj_set_height(w->t2_dd_mode, 38);
+    lv_obj_set_flex_grow(w->t2_dd_mode, 1);
     lv_obj_clear_flag(w->t2_dd_mode, LV_OBJ_FLAG_SCROLL_CHAIN);
-    lv_obj_set_ext_click_area(w->t2_dd_mode, 10);
     lv_obj_set_style_bg_color(w->t2_dd_mode, lv_color_hex(0x1E293B), 0);
     lv_obj_set_style_text_color(w->t2_dd_mode, CLR_WHITE, 0);
     lv_obj_set_style_text_font(w->t2_dd_mode, f->sm, 0);
@@ -311,9 +278,8 @@ static void build_tile2_system(lv_obj_t *tile, UiWidgets *w, lv_coord_t pad, lv_
     lv_obj_set_style_border_color(w->t2_dd_mode, CLR_BORDER, 0);
     lv_obj_set_style_border_width(w->t2_dd_mode, 1, 0);
     lv_obj_set_style_radius(w->t2_dd_mode, 8, 0);
-    lv_coord_t vpad = (btn_h - 16) / 2;
-    lv_obj_set_style_pad_top(w->t2_dd_mode, vpad, 0);
-    lv_obj_set_style_pad_bottom(w->t2_dd_mode, vpad, 0);
+    lv_obj_set_style_pad_top(w->t2_dd_mode, 11, 0);
+    lv_obj_set_style_pad_bottom(w->t2_dd_mode, 11, 0);
     lv_obj_set_style_pad_left(w->t2_dd_mode, 0, 0);
     lv_obj_set_style_pad_right(w->t2_dd_mode, 0, 0);
     lv_dropdown_set_selected(w->t2_dd_mode, (g_snap.sys.activity_mode == ACTIVITY_MODE_BIKE) ? 1 : 0);
@@ -329,19 +295,36 @@ static void build_tile2_system(lv_obj_t *tile, UiWidgets *w, lv_coord_t pad, lv_
     lv_obj_set_style_text_align(list, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_pad_all(list, 8, 0);
 
-    w->t2_btn_log = lv_btn_create(bot_row);
-    lv_obj_set_height(w->t2_btn_log, btn_h);
-    lv_obj_set_flex_grow(w->t2_btn_log, 1);
+    w->t2_btn_power = lv_btn_create(mid_row);
+    lv_obj_set_height(w->t2_btn_power, 38);
+    lv_obj_set_flex_grow(w->t2_btn_power, 1);
+    lv_obj_clear_flag(w->t2_btn_power, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_set_style_bg_color(w->t2_btn_power, lv_color_hex(0x450A0A), 0);
+    lv_obj_set_style_border_color(w->t2_btn_power, CLR_RED, 0);
+    lv_obj_set_style_border_width(w->t2_btn_power, 1, 0);
+    lv_obj_set_style_radius(w->t2_btn_power, 8, 0);
+    lv_obj_add_event_cb(w->t2_btn_power, ui_vm_btn_power_cb, LV_EVENT_CLICKED, w);
+
+    lv_obj_t *lbl_pwr = lv_label_create(w->t2_btn_power);
+    lv_label_set_text(lbl_pwr, LV_SYMBOL_POWER " PWR OFF");
+    lv_obj_set_style_text_font(lbl_pwr, f->xs, 0);
+    lv_obj_set_style_text_color(lbl_pwr, CLR_RED, 0);
+    lv_obj_clear_flag(lbl_pwr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(lbl_pwr);
+
+    // Bottom Full-Width Large Button: [START LOG / STOP (REC)] (54px tall, effortless tap)
+    w->t2_btn_log = lv_btn_create(tile);
+    lv_obj_set_size(w->t2_btn_log, lv_pct(100), (btn_h < 54) ? 54 : btn_h);
     lv_obj_clear_flag(w->t2_btn_log, LV_OBJ_FLAG_SCROLL_CHAIN);
-    lv_obj_set_ext_click_area(w->t2_btn_log, 10);
+    lv_obj_set_ext_click_area(w->t2_btn_log, 12);
     lv_obj_set_style_bg_color(w->t2_btn_log, lv_color_hex(0x2A3B4C), 0);
     lv_obj_set_style_bg_color(w->t2_btn_log, lv_color_hex(0x007ACC), LV_STATE_PRESSED);
-    lv_obj_set_style_radius(w->t2_btn_log, 8, 0);
+    lv_obj_set_style_radius(w->t2_btn_log, 10, 0);
     lv_obj_add_event_cb(w->t2_btn_log, ui_vm_btn_log_cb, LV_EVENT_CLICKED, w);
 
     w->t2_lbl_btn_log = lv_label_create(w->t2_btn_log);
     lv_label_set_text(w->t2_lbl_btn_log, "START LOG");
-    lv_obj_set_style_text_font(w->t2_lbl_btn_log, f->sm, 0);
+    lv_obj_set_style_text_font(w->t2_lbl_btn_log, f->md, 0);
     lv_obj_clear_flag(w->t2_lbl_btn_log, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_center(w->t2_lbl_btn_log);
 }

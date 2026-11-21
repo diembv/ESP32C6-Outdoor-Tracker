@@ -258,6 +258,28 @@ static void handle_routes_activate(void)
     s_server.send(ok ? 200 : 404, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
 }
 
+static void handle_routes_delete(void)
+{
+    touch_activity();
+    String name = s_server.arg("name");
+    if (!is_safe_filename(name)) {
+        s_server.send(400, "application/json", "{\"ok\":false}");
+        return;
+    }
+    char path[128];
+    snprintf(path, sizeof(path), "/sdcard/routes/%s", name.c_str());
+
+    route_nav_unload();
+    sd_bus_lock();
+    int rc = unlink(path);
+    sd_bus_unlock();
+
+    if (rc == 0) {
+        route_nav_autoload();
+    }
+    s_server.send(rc == 0 ? 200 : 404, "application/json", rc == 0 ? "{\"ok\":true}" : "{\"ok\":false}");
+}
+
 static void handle_team_get(void)
 {
     touch_activity();
@@ -334,6 +356,7 @@ bool wifi_sync_start(void)
     s_server.on("/api/logs/download", HTTP_GET, handle_logs_download);
     s_server.on("/api/logs", HTTP_DELETE, handle_logs_delete);
     s_server.on("/api/routes", HTTP_GET, handle_routes_list);
+    s_server.on("/api/routes", HTTP_DELETE, handle_routes_delete);
     s_server.on("/api/routes/upload", HTTP_POST, handle_routes_upload);
     s_server.on("/api/routes/activate", HTTP_POST, handle_routes_activate);
     s_server.on("/api/team", HTTP_GET, handle_team_get);

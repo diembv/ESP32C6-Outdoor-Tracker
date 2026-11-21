@@ -421,25 +421,57 @@ void ui_vm_dd_mode_cb(lv_event_t *e)
                   (mode == ACTIVITY_MODE_BIKE) ? "Cycling" : "Hiking");
 }
 
+static lv_obj_t *make_styled_mbox(const char *title, const char *text, const char *btns[], lv_event_cb_t cb)
+{
+    const UiThemeFonts *f = ui_theme_fonts();
+    lv_obj_t *mbox = lv_msgbox_create(NULL, title, text, btns, false);
+    lv_coord_t w = (SCREEN_W - 24 > 320) ? 320 : (SCREEN_W - 24);
+    lv_obj_set_width(mbox, w);
+    lv_obj_set_style_bg_color(mbox, CLR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(mbox, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(mbox, CLR_ACCENT, 0);
+    lv_obj_set_style_border_width(mbox, 2, 0);
+    lv_obj_set_style_radius(mbox, 10, 0);
+    lv_obj_set_style_pad_all(mbox, 12, 0);
+    lv_obj_set_style_text_color(mbox, CLR_WHITE, 0);
+    lv_obj_set_style_text_font(mbox, f->sm, 0);
+
+    lv_obj_t *t = lv_msgbox_get_title(mbox);
+    if (t) {
+        lv_obj_set_style_text_color(t, CLR_ACCENT, 0);
+        lv_obj_set_style_text_font(t, f->sm, 0);
+    }
+    lv_obj_t *txt = lv_msgbox_get_text(mbox);
+    if (txt) {
+        lv_obj_set_style_text_color(txt, CLR_WHITE, 0);
+        lv_obj_set_style_text_font(txt, f->xs, 0);
+    }
+    lv_obj_t *bm = lv_msgbox_get_btns(mbox);
+    if (bm) {
+        lv_obj_set_width(bm, w - 28);
+        lv_obj_set_height(bm, 36);
+        lv_obj_set_style_text_font(bm, f->sm, 0);
+    }
+
+    lv_obj_add_event_cb(mbox, cb ? cb : mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_center(mbox);
+    return mbox;
+}
+
 void ui_vm_btn_calib_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    static const char *btns[] = {"OK", ""};
     if (!g_snap.gps.fix_valid || !g_snap.gps.altitude_valid || g_snap.gps.satellites < 5) {
-        static const char *btns[] = {"OK", ""};
-        lv_obj_t *mbox = lv_msgbox_create(NULL, "CALIB ALTITUDE",
-                                          "GPS fix not ready.\nNeed 3D fix (>= 5 sats)\nto calibrate altitude.",
-                                          btns, false);
-        lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
-        lv_obj_center(mbox);
+        make_styled_mbox("CALIB ALTITUDE",
+                         "GPS fix not ready.\nNeed 3D fix (>= 5 sats).",
+                         btns, mbox_close_cb);
     } else {
         baro_request_recalibration();
-        static const char *btns[] = {"OK", ""};
-        char msg[128];
-        snprintf(msg, sizeof(msg), "Calibrated to GPS Alt: %.1fm\nSea-level P0 updated.",
+        char msg[96];
+        snprintf(msg, sizeof(msg), "Calibrated to %.1fm\nSea-level P0 updated.",
                  g_snap.gps.altitude_m);
-        lv_obj_t *mbox = lv_msgbox_create(NULL, "CALIB SUCCESS", msg, btns, false);
-        lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
-        lv_obj_center(mbox);
+        make_styled_mbox("CALIB SUCCESS", msg, btns, mbox_close_cb);
     }
 }
 
@@ -449,73 +481,27 @@ void ui_vm_btn_log_cb(lv_event_t *e)
 
     if (!g_snap.sys.sd_present || !g_snap.sys.sd_ok) {
         static const char *btns[] = {"OK", ""};
-        lv_obj_t *mbox = lv_msgbox_create(NULL, "SD CARD ERROR",
-                                          "No MicroSD card inserted\nor card not mounted.",
-                                          btns, false);
-        lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
-        lv_obj_center(mbox);
+        make_styled_mbox("SD CARD ERROR",
+                         "No MicroSD card inserted\nor card not mounted.",
+                         btns, mbox_close_cb);
         return;
     }
 
-    if (g_snap.sys.is_logging_active) {
-        track_logger_toggle(&g_snap, millis());
-
-        float dist_m = 0;
-        uint32_t dur_s = 0;
-        track_logger_get_summary(&dist_m, &dur_s, millis());
-
-        uint32_t m = dur_s / 60;
-        uint32_t s = dur_s % 60;
-        float dist_km = dist_m / 1000.0f;
-        float avg_speed = dur_s > 0 ? (dist_km / (dur_s / 3600.0f)) : 0;
-
-        static const char *btns[] = {"OK", ""};
-        char summary_text[200];
-        snprintf(summary_text, sizeof(summary_text),
-                 "Session saved to MicroSD.\n\n"
-                 "Mode: %s\n"
-                 "Elapsed Time: %02lu:%02lu\n"
-                 "Distance: %.2f km\n"
-                 "Avg Speed: %.1f km/h",
-                 (g_snap.sys.activity_mode == ACTIVITY_MODE_BIKE) ? "Cycling" : "Hiking",
-                 (unsigned long)m, (unsigned long)s, dist_km, avg_speed);
-
-        lv_obj_t *mbox = lv_msgbox_create(NULL, "ACTIVITY SUMMARY", summary_text, btns, false);
-        lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
-        lv_obj_center(mbox);
-    } else {
-        track_logger_toggle(&g_snap, millis());
-
-        if (!g_snap.gps.fix_valid) {
-            static const char *btns[] = {"OK", ""};
-            lv_obj_t *mbox = lv_msgbox_create(NULL, "WAITING FOR GPS",
-                                              "Log armed in standby.\nSystem will auto-record\nonce GPS fix is acquired.",
-                                              btns, false);
-            lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
-            lv_obj_center(mbox);
-        }
-    }
+    // Defer SD card open/flush/close to main loop (never block LVGL task / SPI2)
+    hal_power_request_log_toggle();
 }
 
 void ui_vm_btn_wifi_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    bool active = wifi_sync_toggle();
-    if (active) {
-        static const char *btns[] = {"OK", ""};
-        char msg[128];
-        snprintf(msg, sizeof(msg), "SSID: %s\nURL: http://192.168.4.1\nAuto-off in 5 min.",
-                 wifi_sync_get_ssid());
-        lv_obj_t *mbox = lv_msgbox_create(NULL, "WIFI SYNC ON", msg, btns, false);
-        lv_obj_add_event_cb(mbox, mbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
-        lv_obj_center(mbox);
-    }
+    // Defer Wi-Fi AP start/stop to main loop (prevents LVGL freeze / popup glitch)
+    hal_power_request_wifi_toggle();
 }
 
 void ui_vm_btn_ble_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    ble_service_toggle();
+    hal_power_request_ble_toggle();
 }
 
 static void power_confirm_cb(lv_event_t *e)
@@ -530,23 +516,44 @@ static void power_confirm_cb(lv_event_t *e)
     }
 }
 
-void ui_vm_btn_sleep_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    hal_power_request_screen_sleep();
-}
-
 void ui_vm_btn_power_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     static const char *btns[] = {"OFF", "CANCEL", ""};
-    lv_obj_t *mbox = lv_msgbox_create(
-        NULL,
-        "POWER OFF",
-        "Save active log and\nshut down device?",
-        btns,
-        false
-    );
-    lv_obj_add_event_cb(mbox, power_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    lv_obj_center(mbox);
+    make_styled_mbox("POWER OFF",
+                     "Save active log and\nshut down device?",
+                     btns, power_confirm_cb);
+}
+
+void ui_vm_show_wifi_popup(const char *ssid)
+{
+    static const char *btns[] = {"OK", ""};
+    char msg[128];
+    snprintf(msg, sizeof(msg), "SSID: %s\nhttp://192.168.4.1\nAuto-off in 5 min",
+             ssid ? ssid : "OutdoorTracker");
+    make_styled_mbox("WIFI SYNC ON", msg, btns, mbox_close_cb);
+}
+
+void ui_vm_show_log_popup(bool started, bool has_gps_fix, float dist_m, uint32_t dur_s)
+{
+    static const char *btns[] = {"OK", ""};
+    if (started) {
+        if (!has_gps_fix) {
+            make_styled_mbox("WAITING FOR GPS",
+                             "Log armed in standby.\nWill auto-record once\nGPS fix is acquired.",
+                             btns, mbox_close_cb);
+        }
+    } else {
+        uint32_t m = dur_s / 60;
+        uint32_t s = dur_s % 60;
+        float dist_km = dist_m / 1000.0f;
+        float avg_speed = dur_s > 0 ? (dist_km / (dur_s / 3600.0f)) : 0.0f;
+
+        char summary_text[180];
+        snprintf(summary_text, sizeof(summary_text),
+                 "Saved to MicroSD.\nMode: %s\nTime: %02lu:%02lu\nDist: %.2f km\nAvg: %.1f km/h",
+                 (g_snap.sys.activity_mode == ACTIVITY_MODE_BIKE) ? "Cycling" : "Hiking",
+                 (unsigned long)m, (unsigned long)s, dist_km, avg_speed);
+        make_styled_mbox("ACTIVITY SUMMARY", summary_text, btns, mbox_close_cb);
+    }
 }

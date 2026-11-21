@@ -42,7 +42,6 @@ typedef struct {
     lv_obj_t *t2_lbl_btn_wifi;
     lv_obj_t *t2_btn_ble;
     lv_obj_t *t2_lbl_btn_ble;
-    lv_obj_t *t2_btn_sleep;
     lv_obj_t *t2_btn_power;
     lv_obj_t *t2_dd_mode;
     lv_obj_t *t2_btn_log;

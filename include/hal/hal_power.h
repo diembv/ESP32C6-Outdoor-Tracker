@@ -39,12 +39,16 @@ bool hal_power_is_button_pressed(void);
 void hal_power_shutdown(void);
 
 /**
- * @brief Thread-safe UI-to-main-loop power action requests.
+ * @brief Thread-safe UI-to-main-loop action requests (avoids heavy I/O inside LVGL task).
  */
-void hal_power_request_screen_sleep(void);
-bool hal_power_consume_screen_sleep_req(void);
 void hal_power_request_power_off(void);
 bool hal_power_consume_power_off_req(void);
+void hal_power_request_wifi_toggle(void);
+bool hal_power_consume_wifi_toggle_req(void);
+void hal_power_request_ble_toggle(void);
+bool hal_power_consume_ble_toggle_req(void);
+void hal_power_request_log_toggle(void);
+bool hal_power_consume_log_toggle_req(void);
 
 #ifdef __cplusplus
 }

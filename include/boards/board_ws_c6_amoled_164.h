@@ -89,7 +89,7 @@
 #define BOARD_SD_CLK_PIN              11
 #define BOARD_SD_MAX_FREQ_KHZ         4000
 
-// ── Buttons & Battery ADC ─────────────────────────────────────────────────────
+// ── Buttons & Battery ADC (200K / 100K divider -> VBAT = VADC * 3.0) ─────────
 #define BOARD_BTN_PWR_PIN             9
 #define BOARD_BAT_ADC_PIN             0
-#define BOARD_BAT_ADC_DIVIDER         2.0f
+#define BOARD_BAT_ADC_DIVIDER         3.0f

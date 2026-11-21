@@ -153,18 +153,10 @@ void hal_power_shutdown(void) {
     esp_deep_sleep_start();
 }
 
-static volatile bool s_req_screen_sleep = false;
-static volatile bool s_req_power_off    = false;
-
-void hal_power_request_screen_sleep(void) {
-    s_req_screen_sleep = true;
-}
-
-bool hal_power_consume_screen_sleep_req(void) {
-    if (!s_req_screen_sleep) return false;
-    s_req_screen_sleep = false;
-    return true;
-}
+static volatile bool s_req_power_off   = false;
+static volatile bool s_req_wifi_toggle = false;
+static volatile bool s_req_ble_toggle  = false;
+static volatile bool s_req_log_toggle  = false;
 
 void hal_power_request_power_off(void) {
     s_req_power_off = true;
@@ -173,5 +165,35 @@ void hal_power_request_power_off(void) {
 bool hal_power_consume_power_off_req(void) {
     if (!s_req_power_off) return false;
     s_req_power_off = false;
+    return true;
+}
+
+void hal_power_request_wifi_toggle(void) {
+    s_req_wifi_toggle = true;
+}
+
+bool hal_power_consume_wifi_toggle_req(void) {
+    if (!s_req_wifi_toggle) return false;
+    s_req_wifi_toggle = false;
+    return true;
+}
+
+void hal_power_request_ble_toggle(void) {
+    s_req_ble_toggle = true;
+}
+
+bool hal_power_consume_ble_toggle_req(void) {
+    if (!s_req_ble_toggle) return false;
+    s_req_ble_toggle = false;
+    return true;
+}
+
+void hal_power_request_log_toggle(void) {
+    s_req_log_toggle = true;
+}
+
+bool hal_power_consume_log_toggle_req(void) {
+    if (!s_req_log_toggle) return false;
+    s_req_log_toggle = false;
     return true;
 }
