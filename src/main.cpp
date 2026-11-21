@@ -229,12 +229,11 @@ static void perform_safe_power_off(uint32_t now) {
 void loop() {
     const uint32_t now = millis();
     static constexpr uint32_t SCREEN_AUTO_OFF_MS     = 15000;  // Tự tắt màn sau 15s không chạm
-    static constexpr uint32_t AUTO_POWER_OFF_IDLE_MS = 300000; // Tự tắt nguồn (Deep Sleep) sau 5p không ghi log
 
     static bool     isScreenOn    = true;
     static uint32_t screenOffAtMs = 0;
-    static float    lastPitch     = 0.0f;
-    static float    lastRoll      = 0.0f;
+    static bool     wasTouchDown  = false;
+    static uint32_t firstTapMs    = 0;
 
     auto set_screen_state = [&](bool turn_on, const char *reason) {
         if (isScreenOn == turn_on) return;
@@ -246,6 +245,8 @@ void loop() {
             } else {
                 screenOffAtMs = now;
             }
+            wasTouchDown = false;
+            firstTapMs   = 0;
             hal_display_unlock();
             Serial.printf("[PWR] Man hinh %s (%s)\n", turn_on ? "BAT" : "TAT", reason);
         }
@@ -349,27 +350,30 @@ void loop() {
     }
 
     // ── 1. Nút cứng BOOT/PWR:
-    //    - Bấm ngắn (50ms..2500ms) -> Bật/Tắt màn hình (Sleep)
-    //    - Giữ >= 3000ms           -> Tắt nguồn an toàn (Deep Sleep / PMIC Off)
+    //    - Bấm (>= 30ms) -> Đảo trạng thái Bật/Tắt màn hình ngay lập tức
+    //    - Giữ >= 3000ms -> Tắt nguồn an toàn (Deep Sleep / PMIC Off)
     static uint32_t btn_press_start = 0;
+    static bool     btn_toggled = false;
     static bool     btn_poweroff_triggered = false;
     bool btn_down = hal_power_is_button_pressed();
 
     if (btn_down) {
         if (btn_press_start == 0) {
             btn_press_start = now;
-        } else if (!btn_poweroff_triggered && (now - btn_press_start >= 3000)) {
-            btn_poweroff_triggered = true;
-            perform_safe_power_off(now);
-        }
-    } else {
-        if (btn_press_start > 0 && !btn_poweroff_triggered) {
-            uint32_t held_ms = now - btn_press_start;
-            if (held_ms >= 50) {
+            Serial.println(F("[BTN] BOOT pressed"));
+        } else {
+            if (!btn_toggled && (now - btn_press_start >= 30)) {
+                btn_toggled = true;
                 set_screen_state(!isScreenOn, "BOOT BTN");
             }
+            if (!btn_poweroff_triggered && (now - btn_press_start >= 3000)) {
+                btn_poweroff_triggered = true;
+                perform_safe_power_off(now);
+            }
         }
+    } else {
         btn_press_start = 0;
+        btn_toggled = false;
         btn_poweroff_triggered = false;
     }
 
@@ -388,41 +392,30 @@ void loop() {
         }
     }
 
-    // ── 3. Auto Deep Sleep / Power-Off sau 5 phút tắt màn & KHÔNG ghi log ────
-    if (!isScreenOn &&
-        !g_snap.sys.is_logging_active &&
-        !wifi_sync_is_active() &&
-        !ble_service_is_active() &&
-        (now - screenOffAtMs >= AUTO_POWER_OFF_IDLE_MS)) {
-        Serial.println(F("[PWR] Khong ghi log & tat man > 5 phut -> Tu dong Deep Sleep!"));
-        perform_safe_power_off(now);
-    }
-
-    // ── 4. Khi màn hình đang tắt: Chạm màn hình hoặc lắc cổ tay để bật lại ───
+    // ── 3. Khi màn hình đang tắt: Double-tap màn hình để bật lại ──────────────
     if (!isScreenOn && (now - screenOffAtMs >= 600)) {
         static uint32_t last_touch_wake_check = 0;
-        if (now - last_touch_wake_check >= 100) {
+        if (now - last_touch_wake_check >= 30) {
             last_touch_wake_check = now;
             if (hal_display_lock(-1)) {
-                uint32_t inactive_ms = lv_disp_get_inactive_time(NULL);
+                lv_indev_t *indev = lv_indev_get_next(NULL);
+                bool touch_down = (indev && indev->proc.state == LV_INDEV_STATE_PRESSED);
                 hal_display_unlock();
-                if (inactive_ms < 150) {
-                    set_screen_state(true, "Touch wake");
-                }
-            }
-        }
 
-        if (!isScreenOn && g_snap.imu.valid) {
-            if (fabsf(g_snap.imu.pitch_deg - lastPitch) > 25.0f ||
-                fabsf(g_snap.imu.roll_deg - lastRoll) > 25.0f) {
-                set_screen_state(true, "Motion wake");
+                if (touch_down && !wasTouchDown) {
+                    if (firstTapMs != 0 && (now - firstTapMs) >= 60 && (now - firstTapMs) <= 450) {
+                        firstTapMs = 0;
+                        set_screen_state(true, "Double tap wake");
+                    } else {
+                        firstTapMs = now;
+                    }
+                }
+                if (firstTapMs != 0 && (now - firstTapMs) > 450) {
+                    firstTapMs = 0;
+                }
+                wasTouchDown = touch_down;
             }
-            lastPitch = g_snap.imu.pitch_deg;
-            lastRoll  = g_snap.imu.roll_deg;
         }
-    } else if (g_snap.imu.valid) {
-        lastPitch = g_snap.imu.pitch_deg;
-        lastRoll  = g_snap.imu.roll_deg;
     }
 
     // ── Đọc Pin (PMIC AXP2101 hoặc ADC, Mỗi 2 giây) ──────────────────────────

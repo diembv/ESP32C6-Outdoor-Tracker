@@ -452,6 +452,39 @@ void route_nav_remove_demo(void) {
     closedir(dir);
 }
 
+static bool is_entry_newer(const RouteListEntry &a, const RouteListEntry &b) {
+    return (a.mtime > b.mtime) ||
+           (a.mtime == b.mtime && strcmp(a.name, b.name) > 0);
+}
+
+static void insert_newest_entry(RouteListEntry *list, int *count, int max_count, const RouteListEntry &cand) {
+    if (*count < max_count) {
+        list[(*count)++] = cand;
+        return;
+    }
+    int oldest = 0;
+    for (int i = 1; i < max_count; i++) {
+        if (is_entry_newer(list[oldest], list[i])) {
+            oldest = i;
+        }
+    }
+    if (is_entry_newer(cand, list[oldest])) {
+        list[oldest] = cand;
+    }
+}
+
+static void sort_entries_newest(RouteListEntry *list, int count) {
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (is_entry_newer(list[j], list[i])) {
+                RouteListEntry tmp = list[i];
+                list[i] = list[j];
+                list[j] = tmp;
+            }
+        }
+    }
+}
+
 int route_nav_list_routes(RouteListEntry *out_list, int max_count) {
     if (!out_list || max_count <= 0) return 0;
 
@@ -464,7 +497,7 @@ int route_nav_list_routes(RouteListEntry *out_list, int max_count) {
     int count = 0;
     struct dirent *ent;
     char fullpath[160];
-    while ((ent = readdir(dir)) != NULL && count < max_count) {
+    while ((ent = readdir(dir)) != NULL) {
         if (ent->d_name[0] == '.' || ent->d_name[0] == '_') continue;
         size_t len = strlen(ent->d_name);
         if (len <= 4 || strcasecmp(&ent->d_name[len - 4], ".bin") != 0) continue;
@@ -480,40 +513,25 @@ int route_nav_list_routes(RouteListEntry *out_list, int max_count) {
             continue;
         }
 
-        strncpy(out_list[count].path, fullpath, sizeof(out_list[count].path) - 1);
-        out_list[count].path[sizeof(out_list[count].path) - 1] = '\0';
+        RouteListEntry cand = {};
+        strncpy(cand.path, fullpath, sizeof(cand.path) - 1);
 
         struct stat st;
-        out_list[count].size_bytes = 0;
-        out_list[count].mtime      = 0;
         if (stat(fullpath, &st) == 0) {
-            out_list[count].size_bytes = (uint32_t)st.st_size;
-            if (st.st_mtime > 0) out_list[count].mtime = (uint32_t)st.st_mtime;
+            cand.size_bytes = (uint32_t)st.st_size;
+            if (st.st_mtime > 0) cand.mtime = (uint32_t)st.st_mtime;
         }
 
         if (hdr.name[0] != '\0') {
-            strncpy(out_list[count].name, hdr.name, sizeof(out_list[count].name) - 1);
-            out_list[count].name[sizeof(out_list[count].name) - 1] = '\0';
+            strncpy(cand.name, hdr.name, sizeof(cand.name) - 1);
         } else {
-            strncpy(out_list[count].name, ent->d_name, sizeof(out_list[count].name) - 1);
-            out_list[count].name[sizeof(out_list[count].name) - 1] = '\0';
+            strncpy(cand.name, ent->d_name, sizeof(cand.name) - 1);
         }
-        count++;
+        insert_newest_entry(out_list, &count, max_count, cand);
     }
     closedir(dir);
 
-    for (int i = 0; i < count - 1; i++) {
-        for (int j = i + 1; j < count; j++) {
-            bool swap_it = (out_list[j].mtime > out_list[i].mtime) ||
-                           (out_list[j].mtime == out_list[i].mtime &&
-                            strcmp(out_list[j].name, out_list[i].name) > 0);
-            if (swap_it) {
-                RouteListEntry tmp = out_list[i];
-                out_list[i] = out_list[j];
-                out_list[j] = tmp;
-            }
-        }
-    }
+    sort_entries_newest(out_list, count);
     return count;
 }
 
@@ -525,42 +543,29 @@ int route_nav_list_logs(RouteListEntry *out_list, int max_count) {
 
     int count = 0;
     struct dirent *ent;
-    while ((ent = readdir(dir)) != NULL && count < max_count) {
-        if (ent->d_name[0] == '.') continue;
+    while ((ent = readdir(dir)) != NULL) {
+        if (ent->d_name[0] == '.' || ent->d_name[0] == '_') continue;
         size_t len = strlen(ent->d_name);
         if (len <= 4 || strcasecmp(&ent->d_name[len - 4], ".csv") != 0) continue;
 
-        snprintf(out_list[count].path, sizeof(out_list[count].path), "/sdcard/logs/%s", ent->d_name);
+        RouteListEntry cand = {};
+        snprintf(cand.path, sizeof(cand.path), "/sdcard/logs/%s", ent->d_name);
         struct stat st;
-        out_list[count].size_bytes = 0;
-        out_list[count].mtime      = 0;
-        if (stat(out_list[count].path, &st) == 0) {
-            out_list[count].size_bytes = (uint32_t)st.st_size;
-            if (st.st_mtime > 0) out_list[count].mtime = (uint32_t)st.st_mtime;
+        if (stat(cand.path, &st) == 0) {
+            cand.size_bytes = (uint32_t)st.st_size;
+            if (st.st_mtime > 0) cand.mtime = (uint32_t)st.st_mtime;
         }
 
-        strncpy(out_list[count].name, ent->d_name, sizeof(out_list[count].name) - 1);
-        out_list[count].name[sizeof(out_list[count].name) - 1] = '\0';
-        size_t nlen = strlen(out_list[count].name);
-        if (nlen > 4 && strcasecmp(out_list[count].name + nlen - 4, ".csv") == 0) {
-            out_list[count].name[nlen - 4] = '\0';
+        strncpy(cand.name, ent->d_name, sizeof(cand.name) - 1);
+        size_t nlen = strlen(cand.name);
+        if (nlen > 4 && strcasecmp(cand.name + nlen - 4, ".csv") == 0) {
+            cand.name[nlen - 4] = '\0';
         }
-        count++;
+        insert_newest_entry(out_list, &count, max_count, cand);
     }
     closedir(dir);
 
-    for (int i = 0; i < count - 1; i++) {
-        for (int j = i + 1; j < count; j++) {
-            bool swap_it = (out_list[j].mtime > out_list[i].mtime) ||
-                           (out_list[j].mtime == out_list[i].mtime &&
-                            strcmp(out_list[j].name, out_list[i].name) > 0);
-            if (swap_it) {
-                RouteListEntry tmp = out_list[i];
-                out_list[i] = out_list[j];
-                out_list[j] = tmp;
-            }
-        }
-    }
+    sort_entries_newest(out_list, count);
     return count;
 }
 
