@@ -49,11 +49,26 @@ static void build_tile0_nav(lv_obj_t *tile, UiWidgets *w, lv_coord_t pad, lv_coo
     lv_obj_set_style_pad_ver(tile, pad, 0);
     lv_obj_set_style_pad_row(tile, gap, 0);
 
-    // 1. Header: Route Name & Zoom Button
+    // 1. Header: Route Selector Button & Zoom Button
     lv_obj_t *hdr = make_flex_row(tile, LV_FLEX_ALIGN_SPACE_BETWEEN, 8);
-    w->t0_lbl_route_name = ui_theme_make_val_label(hdr, "ROUTE", CLR_ACCENT, f->md);
-    lv_obj_set_flex_grow(w->t0_lbl_route_name, 1);
+    lv_obj_t *btn_route = lv_btn_create(hdr);
+    lv_obj_set_height(btn_route, 30);
+    lv_obj_set_flex_grow(btn_route, 1);
+    lv_obj_set_style_bg_color(btn_route, lv_color_hex(0x161B22), 0);
+    lv_obj_set_style_bg_color(btn_route, lv_color_hex(0x1F2937), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(btn_route, CLR_ACCENT, 0);
+    lv_obj_set_style_border_width(btn_route, 1, 0);
+    lv_obj_set_style_radius(btn_route, 6, 0);
+    lv_obj_set_style_pad_hor(btn_route, 6, 0);
+    lv_obj_set_ext_click_area(btn_route, 6);
+    lv_obj_clear_flag(btn_route, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_add_event_cb(btn_route, ui_vm_btn_route_cb, LV_EVENT_CLICKED, w);
+
+    w->t0_lbl_route_name = ui_theme_make_val_label(btn_route, LV_SYMBOL_LIST " ROUTE", CLR_ACCENT, f->sm);
+    lv_obj_set_width(w->t0_lbl_route_name, lv_pct(100));
     lv_label_set_long_mode(w->t0_lbl_route_name, LV_LABEL_LONG_DOT);
+    lv_obj_clear_flag(w->t0_lbl_route_name, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(w->t0_lbl_route_name);
 
     w->t0_btn_zoom = lv_btn_create(hdr);
     lv_obj_set_size(w->t0_btn_zoom, (SCREEN_W >= 360) ? 88 : 74, 30);
@@ -205,12 +220,13 @@ static void build_tile2_system(lv_obj_t *tile, UiWidgets *w, lv_coord_t pad, lv_
     lv_obj_set_style_border_width(spacer, 0, 0);
     lv_obj_clear_flag(spacer, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Utility Row: [CALIB] + [WIFI] + [BLE]
+    // Utility Row: [CALIB] + [WIFI] + [BLE] (equal width, easy tap)
     lv_obj_t *util_row = make_flex_row(tile, LV_FLEX_ALIGN_SPACE_BETWEEN, 6);
 
     w->t2_btn_calib = lv_btn_create(util_row);
-    lv_obj_set_height(w->t2_btn_calib, 40);
-    lv_obj_set_flex_grow(w->t2_btn_calib, 2);
+    lv_obj_set_height(w->t2_btn_calib, 42);
+    lv_obj_set_flex_grow(w->t2_btn_calib, 1);
+    lv_obj_set_ext_click_area(w->t2_btn_calib, 4);
     lv_obj_clear_flag(w->t2_btn_calib, LV_OBJ_FLAG_SCROLL_CHAIN);
     lv_obj_set_style_bg_color(w->t2_btn_calib, lv_color_hex(0x1F2937), 0);
     lv_obj_set_style_bg_color(w->t2_btn_calib, lv_color_hex(0x374151), LV_STATE_PRESSED);
@@ -220,15 +236,16 @@ static void build_tile2_system(lv_obj_t *tile, UiWidgets *w, lv_coord_t pad, lv_
     lv_obj_add_event_cb(w->t2_btn_calib, ui_vm_btn_calib_cb, LV_EVENT_CLICKED, w);
 
     lv_obj_t *lbl_calib = lv_label_create(w->t2_btn_calib);
-    lv_label_set_text(lbl_calib, LV_SYMBOL_REFRESH " CALIB");
+    lv_label_set_text(lbl_calib, LV_SYMBOL_REFRESH " CAL");
     lv_obj_set_style_text_font(lbl_calib, f->xs, 0);
     lv_obj_set_style_text_color(lbl_calib, CLR_ACCENT, 0);
     lv_obj_clear_flag(lbl_calib, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_center(lbl_calib);
 
     w->t2_btn_wifi = lv_btn_create(util_row);
-    lv_obj_set_height(w->t2_btn_wifi, 40);
+    lv_obj_set_height(w->t2_btn_wifi, 42);
     lv_obj_set_flex_grow(w->t2_btn_wifi, 1);
+    lv_obj_set_ext_click_area(w->t2_btn_wifi, 4);
     lv_obj_clear_flag(w->t2_btn_wifi, LV_OBJ_FLAG_SCROLL_CHAIN);
     lv_obj_set_style_bg_color(w->t2_btn_wifi, lv_color_hex(0x1F2937), 0);
     lv_obj_set_style_border_color(w->t2_btn_wifi, CLR_BORDER, 0);
@@ -244,8 +261,9 @@ static void build_tile2_system(lv_obj_t *tile, UiWidgets *w, lv_coord_t pad, lv_
     lv_obj_center(w->t2_lbl_btn_wifi);
 
     w->t2_btn_ble = lv_btn_create(util_row);
-    lv_obj_set_height(w->t2_btn_ble, 40);
+    lv_obj_set_height(w->t2_btn_ble, 42);
     lv_obj_set_flex_grow(w->t2_btn_ble, 1);
+    lv_obj_set_ext_click_area(w->t2_btn_ble, 4);
     lv_obj_clear_flag(w->t2_btn_ble, LV_OBJ_FLAG_SCROLL_CHAIN);
     lv_obj_set_style_bg_color(w->t2_btn_ble, lv_color_hex(0x1F2937), 0);
     lv_obj_set_style_border_color(w->t2_btn_ble, CLR_BORDER, 0);
@@ -260,40 +278,29 @@ static void build_tile2_system(lv_obj_t *tile, UiWidgets *w, lv_coord_t pad, lv_
     lv_obj_clear_flag(w->t2_lbl_btn_ble, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_center(w->t2_lbl_btn_ble);
 
-    // Mode & Power Row: [Hiking/Cycling] + [PWR OFF]
+    // Mode & Power Row: [One-tap Hiking/Cycling Toggle] + [PWR OFF]
     lv_obj_t *mid_row = make_flex_row(tile, LV_FLEX_ALIGN_SPACE_BETWEEN, 8);
     lv_obj_clear_flag(mid_row, LV_OBJ_FLAG_SCROLL_CHAIN);
 
-    w->t2_dd_mode = lv_dropdown_create(mid_row);
-    lv_dropdown_set_options(w->t2_dd_mode, "Hiking\nCycling");
-    lv_dropdown_set_symbol(w->t2_dd_mode, NULL);
-    lv_dropdown_set_dir(w->t2_dd_mode, LV_DIR_TOP);
-    lv_obj_set_height(w->t2_dd_mode, 38);
+    bool is_bike = (g_snap.sys.activity_mode == ACTIVITY_MODE_BIKE);
+    w->t2_dd_mode = lv_btn_create(mid_row);
+    lv_obj_set_height(w->t2_dd_mode, 40);
     lv_obj_set_flex_grow(w->t2_dd_mode, 1);
+    lv_obj_set_ext_click_area(w->t2_dd_mode, 4);
     lv_obj_clear_flag(w->t2_dd_mode, LV_OBJ_FLAG_SCROLL_CHAIN);
     lv_obj_set_style_bg_color(w->t2_dd_mode, lv_color_hex(0x1E293B), 0);
-    lv_obj_set_style_text_color(w->t2_dd_mode, CLR_WHITE, 0);
-    lv_obj_set_style_text_font(w->t2_dd_mode, f->sm, 0);
-    lv_obj_set_style_text_align(w->t2_dd_mode, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_border_color(w->t2_dd_mode, CLR_BORDER, 0);
+    lv_obj_set_style_bg_color(w->t2_dd_mode, lv_color_hex(0x334155), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(w->t2_dd_mode, is_bike ? CLR_ORANGE : CLR_GREEN, 0);
     lv_obj_set_style_border_width(w->t2_dd_mode, 1, 0);
     lv_obj_set_style_radius(w->t2_dd_mode, 8, 0);
-    lv_obj_set_style_pad_top(w->t2_dd_mode, 11, 0);
-    lv_obj_set_style_pad_bottom(w->t2_dd_mode, 11, 0);
-    lv_obj_set_style_pad_left(w->t2_dd_mode, 0, 0);
-    lv_obj_set_style_pad_right(w->t2_dd_mode, 0, 0);
-    lv_dropdown_set_selected(w->t2_dd_mode, (g_snap.sys.activity_mode == ACTIVITY_MODE_BIKE) ? 1 : 0);
-    lv_obj_add_event_cb(w->t2_dd_mode, ui_vm_dd_mode_cb, LV_EVENT_VALUE_CHANGED, w);
+    lv_obj_add_event_cb(w->t2_dd_mode, ui_vm_btn_mode_cb, LV_EVENT_CLICKED, w);
 
-    lv_obj_t *list = lv_dropdown_get_list(w->t2_dd_mode);
-    lv_obj_set_style_bg_color(list, lv_color_hex(0x0D1117), 0);
-    lv_obj_set_style_text_color(list, CLR_WHITE, 0);
-    lv_obj_set_style_border_color(list, CLR_ACCENT, 0);
-    lv_obj_set_style_border_width(list, 2, 0);
-    lv_obj_set_style_radius(list, 8, 0);
-    lv_obj_set_style_text_font(list, f->sm, 0);
-    lv_obj_set_style_text_align(list, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_pad_all(list, 8, 0);
+    w->t2_lbl_mode = lv_label_create(w->t2_dd_mode);
+    lv_label_set_text(w->t2_lbl_mode, is_bike ? "Cycling" : "Hiking");
+    lv_obj_set_style_text_font(w->t2_lbl_mode, f->sm, 0);
+    lv_obj_set_style_text_color(w->t2_lbl_mode, CLR_WHITE, 0);
+    lv_obj_clear_flag(w->t2_lbl_mode, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(w->t2_lbl_mode);
 
     w->t2_btn_power = lv_btn_create(mid_row);
     lv_obj_set_height(w->t2_btn_power, 38);

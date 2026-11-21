@@ -14,7 +14,7 @@ typedef struct {
     // Tile 1: Sensors
     bool       gps_fix_valid;
     char       header[48];
-    char       bat_badge[16];
+    char       bat_badge[24];
     lv_color_t bat_color;
     char       speed[32];
     char       coords[96];
@@ -51,8 +51,10 @@ void ui_vm_format(const SensorSnapshot *snap, UiViewModel *out_vm);
  * @brief Shared LVGL event callbacks (pass UiWidgets* as user_data where needed).
  */
 void ui_vm_btn_zoom_cb(lv_event_t *e);
+void ui_vm_btn_route_cb(lv_event_t *e);
 void ui_vm_map_draw_cb(lv_event_t *e);
 void ui_vm_dd_mode_cb(lv_event_t *e);
+void ui_vm_btn_mode_cb(lv_event_t *e);
 void ui_vm_btn_calib_cb(lv_event_t *e);
 void ui_vm_btn_log_cb(lv_event_t *e);
 void ui_vm_btn_wifi_cb(lv_event_t *e);
@@ -63,4 +65,7 @@ void ui_vm_btn_power_cb(lv_event_t *e);
  * @brief Popup helpers to be called from main loop (inside hal_display_lock) after heavy I/O finishes.
  */
 void ui_vm_show_wifi_popup(const char *ssid);
+void ui_vm_show_wifi_error_popup(uint32_t free_heap);
 void ui_vm_show_log_popup(bool started, bool has_gps_fix, float dist_m, uint32_t dur_s);
+void ui_vm_show_route_picker(const void *route_entries, int route_count,
+                             const void *log_entries, int log_count);

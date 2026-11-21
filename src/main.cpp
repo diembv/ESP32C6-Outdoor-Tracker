@@ -186,7 +186,7 @@ void setup() {
         track_logger_init(&g_snap);
         route_nav_init();
         if (g_snap.sys.sd_ok) {
-            route_nav_autoload();
+            route_nav_remove_demo();
         }
         hal_display_set_brightness(180);
         hal_display_unlock();
@@ -256,10 +256,16 @@ void loop() {
         perform_safe_power_off(now);
     }
     if (hal_power_consume_wifi_toggle_req()) {
+        bool was_active = wifi_sync_is_active();
+        if (!was_active && ble_service_is_active()) {
+            ble_service_stop();
+        }
         bool active = wifi_sync_toggle();
         if (hal_display_lock(-1)) {
             if (active) {
                 ui_vm_show_wifi_popup(wifi_sync_get_ssid());
+            } else if (!was_active) {
+                ui_vm_show_wifi_error_popup(ESP.getFreeHeap());
             }
             ui_dashboard_update(&g_snap);
             hal_display_unlock();
@@ -291,6 +297,54 @@ void loop() {
             ui_vm_show_log_popup(!was_logging, g_snap.gps.fix_valid, dist_m, dur_s);
             ui_dashboard_update(&g_snap);
             hal_display_unlock();
+        }
+    }
+    if (hal_power_consume_route_picker_req()) {
+        RouteListEntry routes[12];
+        RouteListEntry logs[12];
+        int route_count = 0;
+        int log_count = 0;
+        if (g_snap.sys.sd_ok) {
+#if defined(BOARD_SD_SHARES_DISPLAY_BUS) && BOARD_SD_SHARES_DISPLAY_BUS
+            if (hal_display_lock(-1)) {
+                route_count = route_nav_list_routes(routes, 12);
+                log_count   = route_nav_list_logs(logs, 12);
+                hal_display_unlock();
+            }
+#else
+            route_count = route_nav_list_routes(routes, 12);
+            log_count   = route_nav_list_logs(logs, 12);
+#endif
+        }
+        if (hal_display_lock(-1)) {
+            ui_vm_show_route_picker(routes, route_count, logs, log_count);
+            hal_display_unlock();
+        }
+    }
+    {
+        char sel_path[128] = {0};
+        if (hal_power_consume_route_select_req(sel_path, sizeof(sel_path))) {
+#if defined(BOARD_SD_SHARES_DISPLAY_BUS) && BOARD_SD_SHARES_DISPLAY_BUS
+            if (hal_display_lock(-1)) {
+                if (sel_path[0] == '\0') {
+                    route_nav_unload();
+                } else {
+                    route_nav_load_file(sel_path);
+                }
+                ui_dashboard_update(&g_snap);
+                hal_display_unlock();
+            }
+#else
+            if (sel_path[0] == '\0') {
+                route_nav_unload();
+            } else {
+                route_nav_load_file(sel_path);
+            }
+            if (hal_display_lock(-1)) {
+                ui_dashboard_update(&g_snap);
+                hal_display_unlock();
+            }
+#endif
         }
     }
 

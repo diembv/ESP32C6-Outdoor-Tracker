@@ -149,9 +149,7 @@ void route_nav_unload(void) {
     Serial.println(F("[ROUTE] Da unload route"));
 }
 
-bool route_nav_load_file(const char *filepath) {
-    if (!filepath || strlen(filepath) == 0) return false;
-
+static bool load_bin_file(const char *filepath) {
     FILE *fp = fopen(filepath, "rb");
     if (!fp) {
         Serial.printf("[ROUTE] File khong ton tai: %s\n", filepath);
@@ -199,6 +197,111 @@ bool route_nav_load_file(const char *filepath) {
     Serial.printf("[ROUTE] >> NAP ROUTE THANH CONG: '%s' (%u diem, %.2f km)\n",
                   s_status.route_name, (unsigned)s_header.point_count, s_header.total_dist_km);
     return true;
+}
+
+static bool convert_csv_to_tmp_bin(const char *csv_path, const char *out_bin_path) {
+    FILE *in = fopen(csv_path, "r");
+    if (!in) {
+        Serial.printf("[ROUTE] Khong mo duoc CSV: %s\n", csv_path);
+        return false;
+    }
+
+    mkdir("/sdcard/routes", 0755);
+    FILE *out = fopen(out_bin_path, "wb");
+    if (!out) {
+        fclose(in);
+        Serial.printf("[ROUTE] Khong tao duoc tmp bin: %s\n", out_bin_path);
+        return false;
+    }
+
+    RouteHeader hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    memcpy(hdr.magic, ROUTE_HEADER_MAGIC, 4);
+    hdr.version = 1;
+    hdr.min_lat = 90.0f;
+    hdr.max_lat = -90.0f;
+    hdr.min_lon = 180.0f;
+    hdr.max_lon = -180.0f;
+
+    // Derive display name from CSV filename (without directory and .csv)
+    const char *base = strrchr(csv_path, '/');
+    base = base ? (base + 1) : csv_path;
+    strncpy(hdr.name, base, sizeof(hdr.name) - 1);
+    hdr.name[sizeof(hdr.name) - 1] = '\0';
+    size_t nlen = strlen(hdr.name);
+    if (nlen > 4 && strcasecmp(hdr.name + nlen - 4, ".csv") == 0) {
+        hdr.name[nlen - 4] = '\0';
+    }
+
+    // Write placeholder header
+    fwrite(&hdr, sizeof(RouteHeader), 1, out);
+
+    char line[128];
+    uint32_t count = 0;
+    float total_km = 0.0f;
+    double prev_lat = 0.0, prev_lon = 0.0;
+    bool has_prev = false;
+
+    while (fgets(line, sizeof(line), in) != NULL) {
+        // Parse: ts,lat,lon,alt
+        char *p1 = strchr(line, ',');
+        if (!p1) continue;
+        double lat = strtod(p1 + 1, &p1);
+        if (*p1 != ',') continue;
+        double lon = strtod(p1 + 1, NULL);
+        if (lat == 0.0 && lon == 0.0) continue;
+        if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) continue;
+
+        if (has_prev) {
+            float d_m = distance_meters(prev_lat, prev_lon, lat, lon);
+            if (d_m < 5.0f) continue; // Downsample dense 1Hz points (<5m)
+            total_km += d_m / 1000.0f;
+        }
+
+        RoutePoint pt = { (float)lat, (float)lon };
+        fwrite(&pt, sizeof(RoutePoint), 1, out);
+        if (pt.lat < hdr.min_lat) hdr.min_lat = pt.lat;
+        if (pt.lat > hdr.max_lat) hdr.max_lat = pt.lat;
+        if (pt.lon < hdr.min_lon) hdr.min_lon = pt.lon;
+        if (pt.lon > hdr.max_lon) hdr.max_lon = pt.lon;
+
+        prev_lat = lat;
+        prev_lon = lon;
+        has_prev = true;
+        count++;
+    }
+    fclose(in);
+
+    if (count < 2) {
+        fclose(out);
+        unlink(out_bin_path);
+        Serial.println(F("[ROUTE] CSV khong du diem GPS hop le (<2)!"));
+        return false;
+    }
+
+    hdr.point_count   = count;
+    hdr.total_dist_km = total_km;
+    fseek(out, 0, SEEK_SET);
+    fwrite(&hdr, sizeof(RouteHeader), 1, out);
+    fclose(out);
+
+    Serial.printf("[ROUTE] Chuyen CSV -> %s (%u diem, %.2f km)\n", out_bin_path, (unsigned)count, total_km);
+    return true;
+}
+
+bool route_nav_load_file(const char *filepath) {
+    if (!filepath || strlen(filepath) == 0) return false;
+
+    size_t len = strlen(filepath);
+    if (len > 4 && strcasecmp(filepath + len - 4, ".csv") == 0) {
+        const char *tmp_bin = "/sdcard/routes/_tmp_log.bin";
+        if (!convert_csv_to_tmp_bin(filepath, tmp_bin)) {
+            return false;
+        }
+        return load_bin_file(tmp_bin);
+    }
+
+    return load_bin_file(filepath);
 }
 
 bool route_nav_autoload(void) {
@@ -318,6 +421,147 @@ void route_nav_set_zoom(MapZoomLevel level) {
 
 const RouteNavStatus *route_nav_get_status(void) {
     return &s_status;
+}
+
+void route_nav_remove_demo(void) {
+    DIR *dir = opendir("/sdcard/routes");
+    if (!dir) return;
+
+    struct dirent *ent;
+    char fullpath[160];
+    while ((ent = readdir(dir)) != NULL) {
+        if (ent->d_name[0] == '.') continue;
+        size_t len = strlen(ent->d_name);
+        if (len <= 4 || strcmp(&ent->d_name[len - 4], ".bin") != 0) continue;
+
+        snprintf(fullpath, sizeof(fullpath), "/sdcard/routes/%s", ent->d_name);
+        FILE *fp = fopen(fullpath, "rb");
+        if (!fp) continue;
+        RouteHeader hdr;
+        size_t n = fread(&hdr, 1, sizeof(RouteHeader), fp);
+        fclose(fp);
+
+        if (n == sizeof(RouteHeader) &&
+            memcmp(hdr.magic, ROUTE_HEADER_MAGIC, 4) == 0 &&
+            strstr(hdr.name, "Ba Vi") != NULL) {
+            if (unlink(fullpath) == 0) {
+                Serial.printf("[ROUTE] Da xoa route demo: %s (%s)\n", fullpath, hdr.name);
+            }
+        }
+    }
+    closedir(dir);
+}
+
+int route_nav_list_routes(RouteListEntry *out_list, int max_count) {
+    if (!out_list || max_count <= 0) return 0;
+
+    DIR *dir = opendir("/sdcard/routes");
+    if (!dir) {
+        mkdir("/sdcard/routes", 0755);
+        return 0;
+    }
+
+    int count = 0;
+    struct dirent *ent;
+    char fullpath[160];
+    while ((ent = readdir(dir)) != NULL && count < max_count) {
+        if (ent->d_name[0] == '.' || ent->d_name[0] == '_') continue;
+        size_t len = strlen(ent->d_name);
+        if (len <= 4 || strcasecmp(&ent->d_name[len - 4], ".bin") != 0) continue;
+
+        snprintf(fullpath, sizeof(fullpath), "/sdcard/routes/%s", ent->d_name);
+        FILE *fp = fopen(fullpath, "rb");
+        if (!fp) continue;
+        RouteHeader hdr;
+        size_t n = fread(&hdr, 1, sizeof(RouteHeader), fp);
+        fclose(fp);
+
+        if (n != sizeof(RouteHeader) || memcmp(hdr.magic, ROUTE_HEADER_MAGIC, 4) != 0) {
+            continue;
+        }
+
+        strncpy(out_list[count].path, fullpath, sizeof(out_list[count].path) - 1);
+        out_list[count].path[sizeof(out_list[count].path) - 1] = '\0';
+
+        struct stat st;
+        out_list[count].size_bytes = 0;
+        out_list[count].mtime      = 0;
+        if (stat(fullpath, &st) == 0) {
+            out_list[count].size_bytes = (uint32_t)st.st_size;
+            if (st.st_mtime > 0) out_list[count].mtime = (uint32_t)st.st_mtime;
+        }
+
+        if (hdr.name[0] != '\0') {
+            strncpy(out_list[count].name, hdr.name, sizeof(out_list[count].name) - 1);
+            out_list[count].name[sizeof(out_list[count].name) - 1] = '\0';
+        } else {
+            strncpy(out_list[count].name, ent->d_name, sizeof(out_list[count].name) - 1);
+            out_list[count].name[sizeof(out_list[count].name) - 1] = '\0';
+        }
+        count++;
+    }
+    closedir(dir);
+
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            bool swap_it = (out_list[j].mtime > out_list[i].mtime) ||
+                           (out_list[j].mtime == out_list[i].mtime &&
+                            strcmp(out_list[j].name, out_list[i].name) > 0);
+            if (swap_it) {
+                RouteListEntry tmp = out_list[i];
+                out_list[i] = out_list[j];
+                out_list[j] = tmp;
+            }
+        }
+    }
+    return count;
+}
+
+int route_nav_list_logs(RouteListEntry *out_list, int max_count) {
+    if (!out_list || max_count <= 0) return 0;
+
+    DIR *dir = opendir("/sdcard/logs");
+    if (!dir) return 0;
+
+    int count = 0;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL && count < max_count) {
+        if (ent->d_name[0] == '.') continue;
+        size_t len = strlen(ent->d_name);
+        if (len <= 4 || strcasecmp(&ent->d_name[len - 4], ".csv") != 0) continue;
+
+        snprintf(out_list[count].path, sizeof(out_list[count].path), "/sdcard/logs/%s", ent->d_name);
+        struct stat st;
+        out_list[count].size_bytes = 0;
+        out_list[count].mtime      = 0;
+        if (stat(out_list[count].path, &st) == 0) {
+            out_list[count].size_bytes = (uint32_t)st.st_size;
+            if (st.st_mtime > 0) out_list[count].mtime = (uint32_t)st.st_mtime;
+        }
+
+        strncpy(out_list[count].name, ent->d_name, sizeof(out_list[count].name) - 1);
+        out_list[count].name[sizeof(out_list[count].name) - 1] = '\0';
+        size_t nlen = strlen(out_list[count].name);
+        if (nlen > 4 && strcasecmp(out_list[count].name + nlen - 4, ".csv") == 0) {
+            out_list[count].name[nlen - 4] = '\0';
+        }
+        count++;
+    }
+    closedir(dir);
+
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            bool swap_it = (out_list[j].mtime > out_list[i].mtime) ||
+                           (out_list[j].mtime == out_list[i].mtime &&
+                            strcmp(out_list[j].name, out_list[i].name) > 0);
+            if (swap_it) {
+                RouteListEntry tmp = out_list[i];
+                out_list[i] = out_list[j];
+                out_list[j] = tmp;
+            }
+        }
+    }
+    return count;
 }
 
 bool route_nav_project_to_screen(

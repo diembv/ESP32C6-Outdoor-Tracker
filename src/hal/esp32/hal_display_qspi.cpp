@@ -220,7 +220,9 @@ void hal_display_init(void) {
 #if defined(BOARD_HAS_PSRAM) && BOARD_HAS_PSRAM
     const uint32_t buf_height = BOARD_DISP_HEIGHT / 4;
 #else
-    const uint32_t buf_height = BOARD_DISP_HEIGHT / 4;
+    // Non-PSRAM (ESP32-C6): use 1/10 screen height (~50 KB for 2 DMA buffers instead of 125 KB)
+    // to leave >120 KB free internal RAM for Wi-Fi SoftAP + WebServer + NimBLE.
+    const uint32_t buf_height = (BOARD_DISP_HEIGHT / 10) & ~1U;
 #endif
     const size_t buf_pixels = (size_t)BOARD_DISP_WIDTH * buf_height;
 

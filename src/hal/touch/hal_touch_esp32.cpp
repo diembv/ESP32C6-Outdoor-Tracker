@@ -39,14 +39,15 @@ bool hal_touch_init(void) {
     }
 #elif (defined(BOARD_TOUCH_FT3168) && BOARD_TOUCH_FT3168) || (defined(BOARD_TOUCH_FT6336) && BOARD_TOUCH_FT6336)
     s_addr = BOARD_TOUCH_I2C_ADDR;
-    if (touch_focaltech_init(s_addr)) {
-        s_backend = TOUCH_FOCALTECH;
+    bool online = touch_focaltech_init(s_addr);
+    // FT3168 / FT6336 enter low-power sleep when idle and frequently NACK I2C at boot
+    // until touched. Always keep the backend registered so polling wakes on first touch.
+    s_backend = TOUCH_FOCALTECH;
 #  if defined(BOARD_TOUCH_FT6336) && BOARD_TOUCH_FT6336
-        s_name = "FT6336";
+    s_name = online ? "FT6336" : "FT6336 (Standby)";
 #  else
-        s_name = "FT3168";
+    s_name = online ? "FT3168" : "FT3168 (Standby)";
 #  endif
-    }
 #elif defined(BOARD_TOUCH_CST820) && BOARD_TOUCH_CST820
     s_addr = BOARD_TOUCH_I2C_ADDR;
     if (touch_cst8xx_init(s_addr)) {

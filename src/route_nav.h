@@ -69,6 +69,28 @@ typedef struct {
     uint32_t     window_start_idx;   // Vị trí bắt đầu của window trong file
 } RouteNavStatus;
 
+typedef struct {
+    char     name[32];
+    char     path[128];
+    uint32_t size_bytes;
+    uint32_t mtime;
+} RouteListEntry;
+
+/**
+ * @brief Quét thư mục /sdcard/routes và liệt kê các file .bin hợp lệ
+ */
+int route_nav_list_routes(RouteListEntry *out_list, int max_count);
+
+/**
+ * @brief Quét thư mục /sdcard/logs và liệt kê các file .csv
+ */
+int route_nav_list_logs(RouteListEntry *out_list, int max_count);
+
+/**
+ * @brief Xóa file route demo Ba Vi khỏi /sdcard/routes nếu còn tồn tại
+ */
+void route_nav_remove_demo(void);
+
 /**
  * @brief Khởi tạo module Navigation
  */

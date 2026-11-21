@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -54,7 +55,8 @@ void ui_vm_format(const SensorSnapshot *snap, UiViewModel *vm)
     snprintf(vm->header, sizeof(vm->header), "Sats:%lu | %s",
              (unsigned long)snap->gps.satellites, timeStr);
 
-    snprintf(vm->bat_badge, sizeof(vm->bat_badge), "%d%%", (int)snap->sys.battery_pct);
+    snprintf(vm->bat_badge, sizeof(vm->bat_badge), "%d%% %.2fV",
+             (int)snap->sys.battery_pct, snap->sys.battery_v);
     if (snap->sys.battery_pct >= 50)      vm->bat_color = CLR_GREEN;
     else if (snap->sys.battery_pct >= 20) vm->bat_color = CLR_YELLOW;
     else                                  vm->bat_color = CLR_RED;
@@ -124,7 +126,7 @@ void ui_vm_format(const SensorSnapshot *snap, UiViewModel *vm)
     // ── Tile 0: Navigation ────────────────────────────────────────────────────
     const RouteNavStatus *nav = route_nav_get_status();
     if (nav && nav->is_active) {
-        snprintf(vm->route_name, sizeof(vm->route_name), "%.14s", nav->route_name);
+        snprintf(vm->route_name, sizeof(vm->route_name), LV_SYMBOL_LIST " %.12s", nav->route_name);
         snprintf(vm->dist_rem, sizeof(vm->dist_rem), "Rem: %.1fkm", nav->dist_remaining_km);
         if (nav->is_off_route) {
             snprintf(vm->xte, sizeof(vm->xte), "OFF +%dm", (int)nav->cross_track_err_m);
@@ -134,7 +136,7 @@ void ui_vm_format(const SensorSnapshot *snap, UiViewModel *vm)
             vm->xte_color = CLR_GREEN;
         }
     } else {
-        snprintf(vm->route_name, sizeof(vm->route_name), "FREE NAV");
+        snprintf(vm->route_name, sizeof(vm->route_name), LV_SYMBOL_LIST " ROUTE");
         snprintf(vm->dist_rem, sizeof(vm->dist_rem), "Rem: -- km");
         snprintf(vm->xte, sizeof(vm->xte), "NO ROUTE");
         vm->xte_color = CLR_DIMTEXT;
@@ -421,6 +423,29 @@ void ui_vm_dd_mode_cb(lv_event_t *e)
                   (mode == ACTIVITY_MODE_BIKE) ? "Cycling" : "Hiking");
 }
 
+void ui_vm_btn_mode_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    UiWidgets *w = (UiWidgets *)lv_event_get_user_data(e);
+
+    ActivityMode mode = (g_snap.sys.activity_mode == ACTIVITY_MODE_BIKE)
+                            ? ACTIVITY_MODE_HIKE
+                            : ACTIVITY_MODE_BIKE;
+    g_snap.sys.activity_mode = mode;
+    track_logger_set_activity_mode(mode);
+
+    if (w && w->t2_lbl_mode) {
+        lv_label_set_text(w->t2_lbl_mode,
+                          (mode == ACTIVITY_MODE_BIKE) ? "Cycling" : "Hiking");
+    }
+    if (w && w->t2_dd_mode) {
+        lv_obj_set_style_border_color(w->t2_dd_mode,
+                                      (mode == ACTIVITY_MODE_BIKE) ? CLR_ORANGE : CLR_GREEN, 0);
+    }
+    Serial.printf("[UI] Che do log doi sang: %s\n",
+                  (mode == ACTIVITY_MODE_BIKE) ? "Cycling" : "Hiking");
+}
+
 static lv_obj_t *make_styled_mbox(const char *title, const char *text, const char *btns[], lv_event_cb_t cb)
 {
     const UiThemeFonts *f = ui_theme_fonts();
@@ -494,6 +519,7 @@ void ui_vm_btn_log_cb(lv_event_t *e)
 void ui_vm_btn_wifi_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    Serial.println(F("[UI] WIFI button clicked"));
     // Defer Wi-Fi AP start/stop to main loop (prevents LVGL freeze / popup glitch)
     hal_power_request_wifi_toggle();
 }
@@ -532,6 +558,275 @@ void ui_vm_show_wifi_popup(const char *ssid)
     snprintf(msg, sizeof(msg), "SSID: %s\nhttp://192.168.4.1\nAuto-off in 5 min",
              ssid ? ssid : "OutdoorTracker");
     make_styled_mbox("WIFI SYNC ON", msg, btns, mbox_close_cb);
+}
+
+void ui_vm_show_wifi_error_popup(uint32_t free_heap)
+{
+    static const char *btns[] = {"OK", ""};
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Cannot start Wi-Fi AP.\nFree RAM: %lu KB\nTry rebooting.",
+             (unsigned long)(free_heap / 1024));
+    make_styled_mbox("WIFI ERROR", msg, btns, mbox_close_cb);
+}
+
+void ui_vm_btn_route_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    hal_power_request_route_picker();
+}
+
+static lv_obj_t *s_route_modal = NULL;
+static lv_obj_t *s_list_routes = NULL;
+static lv_obj_t *s_list_logs   = NULL;
+static lv_obj_t *s_tab_routes  = NULL;
+static lv_obj_t *s_tab_logs    = NULL;
+static char      s_picker_paths[24][128];
+
+static void route_modal_close_cb(lv_event_t *e)
+{
+    (void)e;
+    if (s_route_modal) {
+        lv_obj_del(s_route_modal);
+        s_route_modal = NULL;
+        s_list_routes = NULL;
+        s_list_logs   = NULL;
+        s_tab_routes  = NULL;
+        s_tab_logs    = NULL;
+    }
+}
+
+static void route_item_click_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    const char *path = (const char *)lv_event_get_user_data(e);
+    hal_power_request_route_select(path ? path : "");
+    route_modal_close_cb(e);
+}
+
+static void route_tab_switch_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    bool show_logs = (lv_event_get_target(e) == s_tab_logs);
+    if (s_list_routes && s_list_logs) {
+        if (show_logs) {
+            lv_obj_add_flag(s_list_routes, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(s_list_logs, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_clear_flag(s_list_routes, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_list_logs, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (s_tab_routes && s_tab_logs) {
+        lv_obj_set_style_bg_color(s_tab_routes, show_logs ? lv_color_hex(0x1F2937) : lv_color_hex(0x0369A1), 0);
+        lv_obj_set_style_border_color(s_tab_routes, show_logs ? CLR_BORDER : CLR_ACCENT, 0);
+        lv_obj_set_style_bg_color(s_tab_logs, show_logs ? lv_color_hex(0x0369A1) : lv_color_hex(0x1F2937), 0);
+        lv_obj_set_style_border_color(s_tab_logs, show_logs ? CLR_ACCENT : CLR_BORDER, 0);
+    }
+}
+
+static void format_entry_meta(uint32_t size_bytes, uint32_t mtime, char *out, size_t out_len)
+{
+    float kb = (float)size_bytes / 1024.0f;
+    if (mtime >= 1577836800UL) {
+        time_t local_ts = (time_t)(mtime + 7UL * 3600UL);
+        struct tm tm_info;
+        gmtime_r(&local_ts, &tm_info);
+        snprintf(out, out_len, "%.1f KB  |  %02d/%02d/%04d %02d:%02d",
+                 kb, tm_info.tm_mday, tm_info.tm_mon + 1, tm_info.tm_year + 1900,
+                 tm_info.tm_hour, tm_info.tm_min);
+    } else {
+        snprintf(out, out_len, "%.1f KB  |  No GPS time", kb);
+    }
+}
+
+static void populate_picker_list(lv_obj_t *list, const RouteListEntry *entries, int count,
+                               int path_offset, const char *empty_msg, const UiThemeFonts *f)
+{
+    const RouteNavStatus *nav = route_nav_get_status();
+    for (int i = 0; i < count; i++) {
+        int slot = path_offset + i;
+        strncpy(s_picker_paths[slot], entries[i].path, sizeof(s_picker_paths[slot]) - 1);
+        s_picker_paths[slot][sizeof(s_picker_paths[slot]) - 1] = '\0';
+
+        bool is_cur = (nav && nav->is_active && strcmp(nav->route_name, entries[i].name) == 0);
+
+        lv_obj_t *btn = lv_btn_create(list);
+        lv_obj_set_size(btn, lv_pct(100), LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_color(btn, is_cur ? lv_color_hex(0x164E63) : lv_color_hex(0x1F2937), 0);
+        lv_obj_set_style_border_color(btn, is_cur ? CLR_ACCENT : CLR_BORDER, 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_radius(btn, 8, 0);
+        lv_obj_set_style_pad_hor(btn, 8, 0);
+        lv_obj_set_style_pad_ver(btn, 6, 0);
+        lv_obj_set_style_pad_row(btn, 2, 0);
+        lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+        lv_obj_add_event_cb(btn, route_item_click_cb, LV_EVENT_CLICKED, s_picker_paths[slot]);
+
+        lv_obj_t *lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, entries[i].name);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(lbl, lv_pct(100));
+        lv_obj_set_style_text_font(lbl, f->sm, 0);
+        lv_obj_set_style_text_color(lbl, is_cur ? CLR_ACCENT : CLR_WHITE, 0);
+        lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
+
+        char meta[48];
+        format_entry_meta(entries[i].size_bytes, entries[i].mtime, meta, sizeof(meta));
+        lv_obj_t *sub = lv_label_create(btn);
+        lv_label_set_text(sub, meta);
+        lv_obj_set_width(sub, lv_pct(100));
+        lv_obj_set_style_text_font(sub, f->xs, 0);
+        lv_obj_set_style_text_color(sub, CLR_DIMTEXT, 0);
+        lv_obj_clear_flag(sub, LV_OBJ_FLAG_CLICKABLE);
+    }
+
+    if (count == 0) {
+        lv_obj_t *hint = lv_label_create(list);
+        lv_label_set_text(hint, empty_msg);
+        lv_obj_set_width(hint, lv_pct(100));
+        lv_obj_set_style_text_font(hint, f->xs, 0);
+        lv_obj_set_style_text_color(hint, CLR_DIMTEXT, 0);
+        lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+    }
+}
+
+void ui_vm_show_route_picker(const void *route_entries_ptr, int route_count,
+                             const void *log_entries_ptr, int log_count)
+{
+    route_modal_close_cb(NULL);
+
+    const RouteListEntry *route_entries = (const RouteListEntry *)route_entries_ptr;
+    const RouteListEntry *log_entries   = (const RouteListEntry *)log_entries_ptr;
+    const UiThemeFonts *f = ui_theme_fonts();
+
+    int n_routes = (route_count > 12) ? 12 : (route_count < 0 ? 0 : route_count);
+    int n_logs   = (log_count > 12) ? 12 : (log_count < 0 ? 0 : log_count);
+
+    s_route_modal = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_route_modal, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_color(s_route_modal, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_route_modal, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(s_route_modal, 0, 0);
+    lv_obj_set_style_pad_all(s_route_modal, 0, 0);
+    lv_obj_clear_flag(s_route_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *panel = lv_obj_create(s_route_modal);
+    lv_obj_set_size(panel, lv_pct(92), lv_pct(84));
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x161B22), 0);
+    lv_obj_set_style_border_color(panel, CLR_ACCENT, 0);
+    lv_obj_set_style_border_width(panel, 2, 0);
+    lv_obj_set_style_radius(panel, 12, 0);
+    lv_obj_set_style_pad_all(panel, 10, 0);
+    lv_obj_set_style_pad_row(panel, 6, 0);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+
+    // Header row
+    lv_obj_t *hdr = lv_obj_create(panel);
+    lv_obj_set_size(hdr, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(hdr, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(hdr, 0, 0);
+    lv_obj_set_style_pad_all(hdr, 0, 0);
+    lv_obj_set_flex_flow(hdr, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(hdr);
+    lv_label_set_text(title, "SELECT NAVIGATION");
+    lv_obj_set_style_text_font(title, f->sm, 0);
+    lv_obj_set_style_text_color(title, CLR_ACCENT, 0);
+
+    lv_obj_t *btn_x = lv_btn_create(hdr);
+    lv_obj_set_size(btn_x, 34, 28);
+    lv_obj_set_style_bg_color(btn_x, lv_color_hex(0x374151), 0);
+    lv_obj_set_style_radius(btn_x, 6, 0);
+    lv_obj_add_event_cb(btn_x, route_modal_close_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_x = lv_label_create(btn_x);
+    lv_label_set_text(lbl_x, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_font(lbl_x, f->xs, 0);
+    lv_obj_center(lbl_x);
+
+    // OFF / No Route button
+    lv_obj_t *btn_off = lv_btn_create(panel);
+    lv_obj_set_size(btn_off, lv_pct(100), 36);
+    lv_obj_set_style_bg_color(btn_off, lv_color_hex(0x2D1B1B), 0);
+    lv_obj_set_style_border_color(btn_off, CLR_RED, 0);
+    lv_obj_set_style_border_width(btn_off, 1, 0);
+    lv_obj_set_style_radius(btn_off, 8, 0);
+    lv_obj_add_event_cb(btn_off, route_item_click_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_off = lv_label_create(btn_off);
+    lv_label_set_text(lbl_off, "OFF (No Route)");
+    lv_obj_set_style_text_font(lbl_off, f->xs, 0);
+    lv_obj_set_style_text_color(lbl_off, CLR_WHITE, 0);
+    lv_obj_clear_flag(lbl_off, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(lbl_off);
+
+    // 2-Tab Switcher: [ROUTES (n)] | [LOGS (m)]
+    lv_obj_t *tab_row = lv_obj_create(panel);
+    lv_obj_set_size(tab_row, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(tab_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(tab_row, 0, 0);
+    lv_obj_set_style_pad_all(tab_row, 0, 0);
+    lv_obj_set_style_pad_column(tab_row, 6, 0);
+    lv_obj_set_flex_flow(tab_row, LV_FLEX_FLOW_ROW);
+    lv_obj_clear_flag(tab_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    char tab_buf[32];
+    s_tab_routes = lv_btn_create(tab_row);
+    lv_obj_set_height(s_tab_routes, 34);
+    lv_obj_set_flex_grow(s_tab_routes, 1);
+    lv_obj_set_style_bg_color(s_tab_routes, lv_color_hex(0x0369A1), 0);
+    lv_obj_set_style_border_color(s_tab_routes, CLR_ACCENT, 0);
+    lv_obj_set_style_border_width(s_tab_routes, 1, 0);
+    lv_obj_set_style_radius(s_tab_routes, 6, 0);
+    lv_obj_add_event_cb(s_tab_routes, route_tab_switch_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_tr = lv_label_create(s_tab_routes);
+    snprintf(tab_buf, sizeof(tab_buf), "ROUTES (%d)", n_routes);
+    lv_label_set_text(lbl_tr, tab_buf);
+    lv_obj_set_style_text_font(lbl_tr, f->xs, 0);
+    lv_obj_clear_flag(lbl_tr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(lbl_tr);
+
+    s_tab_logs = lv_btn_create(tab_row);
+    lv_obj_set_height(s_tab_logs, 34);
+    lv_obj_set_flex_grow(s_tab_logs, 1);
+    lv_obj_set_style_bg_color(s_tab_logs, lv_color_hex(0x1F2937), 0);
+    lv_obj_set_style_border_color(s_tab_logs, CLR_BORDER, 0);
+    lv_obj_set_style_border_width(s_tab_logs, 1, 0);
+    lv_obj_set_style_radius(s_tab_logs, 6, 0);
+    lv_obj_add_event_cb(s_tab_logs, route_tab_switch_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_tl = lv_label_create(s_tab_logs);
+    snprintf(tab_buf, sizeof(tab_buf), "LOGS (%d)", n_logs);
+    lv_label_set_text(lbl_tl, tab_buf);
+    lv_obj_set_style_text_font(lbl_tl, f->xs, 0);
+    lv_obj_clear_flag(lbl_tl, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(lbl_tl);
+
+    // List 1: Routes (.bin)
+    s_list_routes = lv_obj_create(panel);
+    lv_obj_set_width(s_list_routes, lv_pct(100));
+    lv_obj_set_flex_grow(s_list_routes, 1);
+    lv_obj_set_style_bg_opa(s_list_routes, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_list_routes, 0, 0);
+    lv_obj_set_style_pad_all(s_list_routes, 2, 0);
+    lv_obj_set_style_pad_row(s_list_routes, 6, 0);
+    lv_obj_set_flex_flow(s_list_routes, LV_FLEX_FLOW_COLUMN);
+    populate_picker_list(s_list_routes, route_entries, n_routes, 0,
+                         "No .bin routes in /sdcard/routes/\nUpload via Wi-Fi Sync.", f);
+
+    // List 2: Recorded Logs (.csv)
+    s_list_logs = lv_obj_create(panel);
+    lv_obj_set_width(s_list_logs, lv_pct(100));
+    lv_obj_set_flex_grow(s_list_logs, 1);
+    lv_obj_set_style_bg_opa(s_list_logs, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_list_logs, 0, 0);
+    lv_obj_set_style_pad_all(s_list_logs, 2, 0);
+    lv_obj_set_style_pad_row(s_list_logs, 6, 0);
+    lv_obj_set_flex_flow(s_list_logs, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_flag(s_list_logs, LV_OBJ_FLAG_HIDDEN);
+    populate_picker_list(s_list_logs, log_entries, n_logs, 12,
+                         "No .csv logs in /sdcard/logs/\nRecord an activity first.", f);
 }
 
 void ui_vm_show_log_popup(bool started, bool has_gps_fix, float dist_m, uint32_t dur_s)

@@ -197,3 +197,37 @@ bool hal_power_consume_log_toggle_req(void) {
     s_req_log_toggle = false;
     return true;
 }
+
+static volatile bool s_req_route_picker = false;
+static volatile bool s_req_route_select = false;
+static char          s_req_route_path[128] = {0};
+
+void hal_power_request_route_picker(void) {
+    s_req_route_picker = true;
+}
+
+bool hal_power_consume_route_picker_req(void) {
+    if (!s_req_route_picker) return false;
+    s_req_route_picker = false;
+    return true;
+}
+
+void hal_power_request_route_select(const char *path) {
+    if (path && path[0] != '\0') {
+        strncpy(s_req_route_path, path, sizeof(s_req_route_path) - 1);
+        s_req_route_path[sizeof(s_req_route_path) - 1] = '\0';
+    } else {
+        s_req_route_path[0] = '\0';
+    }
+    s_req_route_select = true;
+}
+
+bool hal_power_consume_route_select_req(char *out_path, size_t max_len) {
+    if (!s_req_route_select) return false;
+    s_req_route_select = false;
+    if (out_path && max_len > 0) {
+        strncpy(out_path, s_req_route_path, max_len - 1);
+        out_path[max_len - 1] = '\0';
+    }
+    return true;
+}

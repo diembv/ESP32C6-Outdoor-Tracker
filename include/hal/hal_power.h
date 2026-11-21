@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +50,10 @@ void hal_power_request_ble_toggle(void);
 bool hal_power_consume_ble_toggle_req(void);
 void hal_power_request_log_toggle(void);
 bool hal_power_consume_log_toggle_req(void);
+void hal_power_request_route_picker(void);
+bool hal_power_consume_route_picker_req(void);
+void hal_power_request_route_select(const char *path);
+bool hal_power_consume_route_select_req(char *out_path, size_t max_len);
 
 #ifdef __cplusplus
 }

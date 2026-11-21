@@ -101,12 +101,18 @@ async function loadStatus(){
     ].map(([k,v])=>`<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
   }catch(e){msg('Status error: '+e,1);}
 }
+function fmtTime(ts){
+  if(!ts||ts<1577836800)return 'No GPS time';
+  const d=new Date(ts*1000),p=n=>String(n).padStart(2,'0');
+  return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 async function loadLogs(){
   try{
     const d=await(await fetch('/api/logs')).json();
     if(!d.files.length){$('lgBox').innerHTML='<div class="k">No CSV logs found</div>';return;}
+    d.files.sort((a,b)=>(b.mtime||0)-(a.mtime||0)||b.name.localeCompare(a.name));
     $('lgBox').innerHTML=d.files.map(f=>`<div class="row">
-      <div><div class="v">${f.name}</div><div class="k">${(f.size/1024).toFixed(1)} KB</div></div>
+      <div><div class="v">${f.name}</div><div class="k">${(f.size/1024).toFixed(1)} KB &bull; ${fmtTime(f.mtime)}</div></div>
       <div style="display:flex;gap:4px">
         <button class="pri" onclick="dlGpx('${f.name}')">GPX</button>
         <button onclick="location.href='/api/logs/download?name='+encodeURIComponent('${f.name}')">CSV</button>

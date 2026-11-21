@@ -109,6 +109,11 @@ void ui_dashboard_update(const SensorSnapshot *snap)
             lv_label_set_text(s_widgets.t2_lbl_btn_wifi,
                               vm.wifi_active ? LV_SYMBOL_WIFI " ON" : LV_SYMBOL_WIFI " WIFI");
         }
+        if (s_widgets.t2_lbl_mode && s_widgets.t2_dd_mode) {
+            bool is_bike = (snap->sys.activity_mode == ACTIVITY_MODE_BIKE);
+            lv_label_set_text(s_widgets.t2_lbl_mode, is_bike ? "Cycling" : "Hiking");
+            lv_obj_set_style_border_color(s_widgets.t2_dd_mode, is_bike ? CLR_ORANGE : CLR_GREEN, 0);
+        }
         if (s_widgets.t2_btn_ble && s_widgets.t2_lbl_btn_ble) {
             lv_obj_set_style_bg_color(s_widgets.t2_btn_ble,
                                       vm.ble_active ? lv_color_hex(0x065F46) : lv_color_hex(0x1F2937), 0);

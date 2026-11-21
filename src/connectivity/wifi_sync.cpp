@@ -13,6 +13,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <DNSServer.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/unistd.h>
@@ -23,6 +24,8 @@ extern SensorSnapshot g_snap;
 
 static constexpr uint32_t WIFI_IDLE_TIMEOUT_MS = 300000UL; // 5 minutes
 static WebServer s_server(80);
+static DNSServer s_dns;
+static bool      s_routes_registered = false;
 static bool      s_active = false;
 static uint32_t  s_last_activity_ms = 0;
 static char      s_ssid[32] = "OutdoorTracker";
@@ -101,18 +104,25 @@ static void handle_list_dir(const char *dir_path, const char *ext)
         struct dirent *ent;
         size_t ext_len = strlen(ext);
         while ((ent = readdir(dir)) != NULL) {
+            if (ent->d_name[0] == '.' || ent->d_name[0] == '_') continue;
             size_t nlen = strlen(ent->d_name);
             if (nlen > ext_len && strcasecmp(ent->d_name + nlen - ext_len, ext) == 0) {
                 char full[128];
                 snprintf(full, sizeof(full), "%s/%s", dir_path, ent->d_name);
                 struct stat st;
                 uint32_t sz = 0;
-                if (stat(full, &st) == 0) sz = (uint32_t)st.st_size;
+                uint32_t mtime = 0;
+                if (stat(full, &st) == 0) {
+                    sz = (uint32_t)st.st_size;
+                    if (st.st_mtime > 0) mtime = (uint32_t)st.st_mtime;
+                }
                 if (!first) json += ",";
                 json += "{\"name\":\"";
                 json += ent->d_name;
                 json += "\",\"size\":";
                 json += String(sz);
+                json += ",\"mtime\":";
+                json += String(mtime);
                 json += "}";
                 first = false;
             }
@@ -339,29 +349,42 @@ bool wifi_sync_start(void)
 {
     if (s_active) return true;
 
+    Serial.printf("[WIFI] Starting Sync AP... free heap=%u B\n", (unsigned)ESP.getFreeHeap());
     uint8_t mac[6] = {0};
+    WiFi.persistent(false);
     WiFi.mode(WIFI_AP);
     WiFi.softAPmacAddress(mac);
     snprintf(s_ssid, sizeof(s_ssid), "OutdoorTracker-%02X%02X", mac[4], mac[5]);
 
     if (!WiFi.softAP(s_ssid)) {
-        Serial.println(F("[WIFI] softAP start failed"));
+        Serial.printf("[WIFI] softAP start failed (free heap=%u B)\n", (unsigned)ESP.getFreeHeap());
         WiFi.mode(WIFI_OFF);
         return false;
     }
+    delay(100);
+    WiFi.setSleep(false);
 
-    s_server.on("/", HTTP_GET, handle_root);
-    s_server.on("/api/status", HTTP_GET, handle_status);
-    s_server.on("/api/logs", HTTP_GET, handle_logs_list);
-    s_server.on("/api/logs/download", HTTP_GET, handle_logs_download);
-    s_server.on("/api/logs", HTTP_DELETE, handle_logs_delete);
-    s_server.on("/api/routes", HTTP_GET, handle_routes_list);
-    s_server.on("/api/routes", HTTP_DELETE, handle_routes_delete);
-    s_server.on("/api/routes/upload", HTTP_POST, handle_routes_upload);
-    s_server.on("/api/routes/activate", HTTP_POST, handle_routes_activate);
-    s_server.on("/api/team", HTTP_GET, handle_team_get);
-    s_server.on("/api/team", HTTP_POST, handle_team_post);
+    if (!s_routes_registered) {
+        s_server.on("/", HTTP_GET, handle_root);
+        s_server.on("/api/status", HTTP_GET, handle_status);
+        s_server.on("/api/logs", HTTP_GET, handle_logs_list);
+        s_server.on("/api/logs/download", HTTP_GET, handle_logs_download);
+        s_server.on("/api/logs", HTTP_DELETE, handle_logs_delete);
+        s_server.on("/api/routes", HTTP_GET, handle_routes_list);
+        s_server.on("/api/routes", HTTP_DELETE, handle_routes_delete);
+        s_server.on("/api/routes/upload", HTTP_POST, handle_routes_upload);
+        s_server.on("/api/routes/activate", HTTP_POST, handle_routes_activate);
+        s_server.on("/api/team", HTTP_GET, handle_team_get);
+        s_server.on("/api/team", HTTP_POST, handle_team_post);
+        s_server.onNotFound([]() {
+            touch_activity();
+            s_server.sendHeader("Location", "http://192.168.4.1/", true);
+            s_server.send(302, "text/plain", "");
+        });
+        s_routes_registered = true;
+    }
 
+    s_dns.start(53, "*", WiFi.softAPIP());
     s_server.begin();
     s_active = true;
     g_snap.sys.wifi_sync_active = true;
@@ -375,6 +398,7 @@ bool wifi_sync_start(void)
 void wifi_sync_stop(void)
 {
     if (!s_active) return;
+    s_dns.stop();
     s_server.stop();
     WiFi.softAPdisconnect(true);
     WiFi.mode(WIFI_OFF);
@@ -405,6 +429,7 @@ const char *wifi_sync_get_ssid(void)
 void wifi_sync_loop(void)
 {
     if (!s_active) return;
+    s_dns.processNextRequest();
     s_server.handleClient();
     if ((millis() - s_last_activity_ms) >= WIFI_IDLE_TIMEOUT_MS) {
         Serial.println(F("[WIFI] Idle 5-min timeout -> auto-stopping AP"));

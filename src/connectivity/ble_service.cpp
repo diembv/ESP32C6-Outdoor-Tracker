@@ -8,6 +8,7 @@
 #include "core/baro_fusion.h"
 #include "core/track_logger.h"
 #include "core/team_config.h"
+#include "hal/hal_power.h"
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
@@ -35,10 +36,11 @@ typedef struct {
 } BleTelemetryPacket;
 #pragma pack(pop)
 
-static bool                s_active    = false;
-static bool                s_connected = false;
-static uint32_t            s_last_tx   = 0;
-static NimBLEServer       *s_server    = nullptr;
+static bool                s_ble_inited = false;
+static bool                s_active     = false;
+static bool                s_connected  = false;
+static uint32_t            s_last_tx    = 0;
+static NimBLEServer       *s_server     = nullptr;
 static NimBLECharacteristic *s_telem_chr = nullptr;
 
 class TrackerServerCallbacks : public NimBLEServerCallbacks {
@@ -67,8 +69,8 @@ class TrackerCtrlCallbacks : public NimBLECharacteristicCallbacks {
 
         uint8_t cmd = (uint8_t)val[0];
         switch (cmd) {
-            case 0x01: // Toggle CSV logging
-                track_logger_toggle(&g_snap, millis());
+            case 0x01: // Toggle CSV logging (deferred to main loop for SPI safety)
+                hal_power_request_log_toggle();
                 break;
             case 0x02: // Request Baro recalibration
                 baro_request_recalibration();
@@ -112,29 +114,33 @@ bool ble_service_start(void)
 {
     if (s_active) return true;
 
-    NimBLEDevice::init("OutdoorTracker");
-    NimBLEDevice::setPower(ESP_PWR_LVL_P3);
+    if (!s_ble_inited) {
+        NimBLEDevice::init("OutdoorTracker");
+        NimBLEDevice::setPower(ESP_PWR_LVL_P3);
 
-    s_server = NimBLEDevice::createServer();
-    s_server->setCallbacks(&s_srv_cb);
+        s_server = NimBLEDevice::createServer();
+        s_server->setCallbacks(&s_srv_cb);
 
-    NimBLEService *svc = s_server->createService(BLE_SVC_UUID);
+        NimBLEService *svc = s_server->createService(BLE_SVC_UUID);
 
-    s_telem_chr = svc->createCharacteristic(
-        BLE_CHAR_TELEM_UUID,
-        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
-    );
+        s_telem_chr = svc->createCharacteristic(
+            BLE_CHAR_TELEM_UUID,
+            NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+        );
 
-    NimBLECharacteristic *ctrl_chr = svc->createCharacteristic(
-        BLE_CHAR_CTRL_UUID,
-        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
-    );
-    ctrl_chr->setCallbacks(&s_ctrl_cb);
+        NimBLECharacteristic *ctrl_chr = svc->createCharacteristic(
+            BLE_CHAR_CTRL_UUID,
+            NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+        );
+        ctrl_chr->setCallbacks(&s_ctrl_cb);
 
-    NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
-    adv->addServiceUUID(BLE_SVC_UUID);
-    adv->setName("OutdoorTracker");
-    adv->start();
+        NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+        adv->addServiceUUID(BLE_SVC_UUID);
+        adv->setName("OutdoorTracker");
+        s_ble_inited = true;
+    }
+
+    NimBLEDevice::startAdvertising();
 
     s_active = true;
     g_snap.sys.ble_active = true;
@@ -145,13 +151,20 @@ bool ble_service_start(void)
 void ble_service_stop(void)
 {
     if (!s_active) return;
-    NimBLEDevice::deinit(true);
-    s_server    = nullptr;
-    s_telem_chr = nullptr;
-    s_connected = false;
-    s_active    = false;
+
+    // Set inactive BEFORE disconnecting so onDisconnect() won't restart advertising
+    s_active = false;
     g_snap.sys.ble_active = false;
-    Serial.println(F("[BLE] NimBLE GATT service stopped"));
+
+    NimBLEDevice::stopAdvertising();
+    if (s_server) {
+        auto peers = s_server->getPeerDevices();
+        for (uint16_t conn_id : peers) {
+            s_server->disconnect(conn_id);
+        }
+    }
+    s_connected = false;
+    Serial.println(F("[BLE] NimBLE GATT service stopped (advertising off)"));
 }
 
 bool ble_service_toggle(void)
